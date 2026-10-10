@@ -1,0 +1,42 @@
+[project]
+name = "nanomlx-model"
+version = "0.1.0"
+description = "nanoMLX: from-scratch GPT on Apple silicon (MLX)"
+readme = "README.md"
+authors = [
+    { name = "Ranveer Soni", email = "git@ranveersoni.me" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "mlx",
+    "numpy",
+    "datasets",
+    "huggingface_hub",
+    "tensorboard",
+    "regex",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "ruff",
+    "maturin",
+    # Measurement-only: bench scripts run under this env for mlx access;
+    # psutil is a spec-listed (§15 benchmarks) dep used for RSS specs only,
+    # never imported by the model itself.
+    "psutil",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "nanomlx"
+module-root = "src"
+
+[tool.ruff]
+line-length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

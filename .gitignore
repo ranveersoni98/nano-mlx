@@ -1,0 +1,34 @@
+# Agent config (private; never published)
+.agents/
+
+# Rust
+target/
+**/target/
+
+# Python
+__pycache__/
+*.py[oc]
+.venv/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+wheels/
+*.egg-info/
+
+# Data & artifacts (never commit per AGENTS Sec 14)
+data/
+*.bin
+*.safetensors
+checkpoints/
+events.out.tfevents.*
+
+# Benchmark outputs are committed EXCEPT charts scratch
+# (benchmarks/results/*.json IS committed intentionally)
+
+# macOS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/

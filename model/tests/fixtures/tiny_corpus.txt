@@ -1,0 +1,21 @@
+Hello, world! This is the frozen tiny corpus for tokenizer parity fixtures.
+The quick brown fox jumps over the lazy dog. 123 numbers 4567 here.
+def hello(name):
+    return f'hi {name}!'
+fn main() { println!("Hello, world!"); }
+{"key": "value", "nums": [1, 2, 3]}
+Emoji party: 🎉🚀 and family 👨‍👩‍👧‍👦 plus flags 🇺🇸🇮🇳
+CJK: 你好世界 日本語のテスト 한국어 테스트
+Hindi: नमस्ते दुनिया, यह एक परीक्षण है।
+Arabic: مرحبا بالعالم، هذا اختبار للرموز
+Combining: café naïve résumé Z͑ͫ̓ͪ̂ͫ̽͏̴̙̤̞͉͚̯̞͠aͫlͨgͤoͭ
+Whitespace:    lots		of
+
+newlines
+and CRLF   end
+Contractions: don't can't won't it's she's they'll
+Money and numbers: $19.99 €25 ₹1,999.50 1000000 3.14159
+Punctuation!!! ... ??? --- (parens) [brackets] {braces}
+More code: for i in range(10): print(f"{i:03d}")
+let mut v: Vec<String> = Vec::new(); // rust comment
+SELECT * FROM users WHERE id = 42; -- sql line

@@ -1,0 +1,3 @@
+[workspace]
+members = ["tokenizer-core", "tokenizer-py"]
+resolver = "2"

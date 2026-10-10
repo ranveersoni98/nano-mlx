@@ -1,0 +1,12 @@
+[build-system]
+requires = ["maturin>=1,<2"]
+build-backend = "maturin"
+
+[project]
+name = "nanomlx-tokenizer"
+version = "0.1.0"
+requires-python = ">=3.11"
+
+[tool.maturin]
+bindings = "pyo3"
+module-name = "nanomlx_tokenizer"

@@ -1,0 +1,37 @@
+[project]
+name = "nanomlx-benchmarks"
+version = "0.1.0"
+description = "nanoMLX honest benchmark harnesses (tokenizer + model)"
+readme = "README.md"
+authors = [
+    { name = "Ranveer Soni", email = "git@ranveersoni.me" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "matplotlib",
+    "tiktoken",
+    "tokenizers",
+    "psutil",
+    "numpy",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "ruff",
+    "maturin",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "nanomlx_bench"
+module-root = "src"
+
+[tool.ruff]
+line-length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

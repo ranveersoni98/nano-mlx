@@ -1,0 +1,41 @@
+# CI — macOS only (MLX doesn't do Linux/CUDA here)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  rust:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test
+        run: cargo test --workspace --manifest-path tokenizer/Cargo.toml
+      - name: Clippy
+        run: cargo clippy --workspace --manifest-path tokenizer/Cargo.toml -- -D warnings
+      - name: Format
+        run: cargo fmt --manifest-path tokenizer/Cargo.toml --all -- --check
+
+  python:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Sync envs
+        run: |
+          uv sync --project model --group dev
+          uv sync --project benchmarks --group dev
+      - name: Build extension (both envs)
+        run: |
+          uv run --project model maturin develop --release -m tokenizer/tokenizer-py/Cargo.toml
+          uv run --project benchmarks maturin develop --release -m tokenizer/tokenizer-py/Cargo.toml
+      - name: Pytest (fast suites)
+        run: |
+          uv run --project model pytest model/tests/ tests/ -m "not slow" -q
+          uv run --project benchmarks pytest benchmarks/tests -q
+      - name: Ruff
+        run: |
+          uv run --project model ruff check model/ tests/ benchmarks/
+          uv run --project model ruff format --check model/ tests/ benchmarks/
