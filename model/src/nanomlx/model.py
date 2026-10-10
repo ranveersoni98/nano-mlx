@@ -1,6 +1,6 @@
 """Decoder-only transformer in MLX (M4): manual attention, kept permanently.
 
-Architecture (AGENTS.md §7.1): token embedding -> N x pre-norm block ->
+Architecture: token embedding -> N x pre-norm block ->
 final RMSNorm -> LM head. Attention is multi-head with optional GQA, RoPE on
 Q/K, causal masking, no absolute positions. MLP is SwiGLU. No biases by
 default. Weight tying is a config flag (default on for small presets).

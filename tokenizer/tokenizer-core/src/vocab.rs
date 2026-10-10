@@ -1,6 +1,5 @@
 //! Vocabulary: merges, ranks, token bytes, special tokens.
 //!
-//! ID layout (frozen, AGENTS.md §5.1):
 //!
 //! ```text
 //! 0..=255                single bytes (any input round-trips, no UNK)
@@ -25,7 +24,7 @@ pub type FastMap<K, V> = HashMap<K, V, BuildHasherDefault<AHasher>>;
 /// Portable 64-bit FNV-1a hash.
 ///
 /// Used for the pattern fingerprint and the merge checksum so that the Rust
-/// core and the pure-Python reference (`reference_bpe.py`) compute
+/// core and the Python reference (`reference_bpe.py`) compute
 /// **identical** values without sharing a crypto dependency. (Neither side
 /// is allowed a new hashing crate without approval; FNV-1a is ~10 lines in
 /// both languages.)

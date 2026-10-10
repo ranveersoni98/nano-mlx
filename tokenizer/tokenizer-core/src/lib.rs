@@ -1,6 +1,5 @@
-//! nanoMLX byte-level BPE tokenizer core (pure Rust, no PyO3).
+//! nanoMLX byte-level BPE tokenizer core.
 //!
-//! Layout (AGENTS.md §2):
 //!
 //! ```text
 //! pretokenize.rs  regex split + special-token split (single source of truth:

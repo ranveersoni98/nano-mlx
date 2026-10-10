@@ -1,4 +1,4 @@
-"""Shared benchmark helpers: machine specs + JSON result writer (AGENTS.md §11)."""
+"""Shared benchmark helpers: machine specs + JSON result writer"""
 
 from __future__ import annotations
 
@@ -44,7 +44,10 @@ def machine_specs() -> dict:
     def cpu_count() -> int:
         import psutil
 
-        return int(psutil.cpu_count(logical=False))
+        count = psutil.cpu_count(logical=False) or psutil.cpu_count(logical=True)
+        if count is None:
+            raise RuntimeError("could not determine CPU count")
+        return int(count)
 
     def rust_version() -> str:
         out = subprocess.run(

@@ -17,7 +17,6 @@
 //! tokenizing training data with a different pattern than the model expects
 //! silently corrupts everything downstream.
 //!
-//! `.bin` files (frozen, AGENTS.md §6) are raw little-endian ids, no header:
 //! `u16` iff `vocab_size < 65536` else `u32`, with a sibling `meta.json`.
 
 use std::fs;
@@ -174,7 +173,7 @@ pub fn encode_file_to_bin(
         }
     }
 
-    // Frozen dtype rule (AGENTS.md §12): u16 iff vocab < 64k.
+    //u16 iff vocab < 64k.
     let use_u16 = tok.vocab_size() < 65536;
     let dtype = if use_u16 { "uint16" } else { "uint32" };
     let mut buf = Vec::with_capacity(all_ids.len() * if use_u16 { 2 } else { 4 });

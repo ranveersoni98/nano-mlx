@@ -3,7 +3,7 @@
 Single source for shapes, presets, and parameter accounting. The tokenizer
 (`reference_bpe` / Rust `nanomlx_tokenizer`) owns the vocabulary; the model
 only sees `vocab_size`. Tests use the 320-id fixture vocab, training uses
-the 32k default (frozen, AGENTS.md §12).
+the 32k default
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 @dataclass
 class ModelConfig:
-    """Llama-style decoder-only transformer (AGENTS.md §7.1)."""
+    """Llama-style decoder-only transformer """
 
     vocab_size: int = 32000
     n_layers: int = 6
@@ -99,7 +99,7 @@ class TrainConfig:
     eps: float = 1e-8
 
 
-# Starting points (AGENTS.md §7.3); tune to actual RAM. Exact counts come
+# Starting points; tune to actual RAM. Exact counts come
 # from ModelConfig.param_count(), never from this table's approximations.
 PRESETS: dict[str, dict] = {
     "debug": {"n_layers": 2, "d_model": 64, "n_heads": 4, "n_kv_heads": 4, "context": 128},
@@ -108,7 +108,7 @@ PRESETS: dict[str, dict] = {
     "base": {"n_layers": 12, "d_model": 768, "n_heads": 12, "n_kv_heads": 4, "context": 1024},
 }
 
-# Peak-LR starting points per size (AGENTS.md §8).
+# Peak-LR starting points per size.
 PRESET_LR: dict[str, float] = {
     "debug": 1e-3,
     "tiny": 1e-3,

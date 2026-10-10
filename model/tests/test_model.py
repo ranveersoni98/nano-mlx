@@ -1,4 +1,4 @@
-"""M4 acceptance: MLX model sanity (AGENTS.md §4 M4 + §10 matrix).
+"""MLX model's sanity check lol
 
 Vocab comes from our own tokenizer: the 320-id fixture vocab grounds
 `vocab_size` (frozen default 32k is used in real training, not tests).
@@ -108,6 +108,7 @@ def test_overfit_one_batch(debug_cfg: ModelConfig):
 
     loss_and_grad = nn.value_and_grad(model, loss_fn)
     final = float("inf")
+    step = 0
     for step in range(500):
         loss, grads = loss_and_grad(model)
         opt.update(model, grads)

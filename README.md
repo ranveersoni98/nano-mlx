@@ -18,7 +18,7 @@ A GPT built entirely from scratch, running only on Apple silicon. No CUDA, no cl
 ```
 nanoMLX/
   README.md / LICENSE
-  tokenizer/             # Rust workspace: tokenizer-core (pure) + tokenizer-py (PyO3)
+  tokenizer/             # Rust workspace: tokenizer-core + tokenizer-py (PyO3)
   model/                 # Python uv project: MLX model, data, training, inference
   benchmarks/            # Python uv project: harnesses, results/*.json, charts/
   scripts/               # fixture regen, dataset download

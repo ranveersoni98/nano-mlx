@@ -1,6 +1,6 @@
-"""M1 acceptance: Python reference BPE.
+"""Py reference BPE.
 
-Covers (AGENTS.md §4 M1): round-trip on English, code (Python/Rust/JSON),
+Covers round-trip on English, code (Python/Rust/JSON),
 emoji + ZWJ sequences, CJK, Hindi/Devanagari, Arabic (RTL), combining
 characters, whitespace runs, tabs/newlines/CRLF, empty string, single byte,
 special-token handling, plus training determinism and save/load.

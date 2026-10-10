@@ -1,7 +1,7 @@
-"""Pure-Python byte-level BPE - the source of truth (M1).
+"""Python byte-level BPE.
 
 The Rust core (`tokenizer-core`) must reproduce this module's ids exactly.
-Frozen rules this file defines (AGENTS.md):
+Frozen rules this file defines:
 - §5.1 ID layout: 0-255 bytes, then merges in order, then specials.
 - §5.4 deterministic tie-breaks: highest count, then smallest (left, right).
 - §6 `.bin` / `meta.json` format and the u16-iff-vocab<64k dtype rule.

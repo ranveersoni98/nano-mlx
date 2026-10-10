@@ -4,7 +4,6 @@
 //! source of truth**. It is baked in with `include_str!` (trailing newline
 //! trimmed: a literal `\n` here would otherwise become part of the pattern)
 //! and compiled **once per thread** (see below), so `pretokenize` stays a
-//! pure function of its input: no thread-count or batching dependence.
 //!
 //! Engine notes:
 //! - Style is o200k-like (GPT-4o / Llama-3 family): case-aware word pieces,

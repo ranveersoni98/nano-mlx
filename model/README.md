@@ -6,7 +6,7 @@ The Python side of nanoMLX: MLX transformer, data pipeline, training loop, and g
 
 ```
 src/nanomlx/
-  reference_bpe.py  # pure-Python BPE - the source of truth for the Rust core
+  reference_bpe.py  # Python BPE - the source of truth for the Rust core
   config.py         # ModelConfig / TrainConfig + debug/tiny/small/base presets
   model.py          # GPT: manual attention, GQA, RoPE, RMSNorm, SwiGLU (+mx.fast flags)
   metal.py          # optional custom fused-RMSNorm Metal kernel

@@ -1,6 +1,5 @@
 //! Thin PyO3 bindings over `tokenizer-core` - no algorithmic code here.
 //!
-//! Policy (AGENTS.md §2): argument conversion, GIL release around heavy work
 //! (`py.detach` on every call that can exceed ~1 ms), and error
 //! mapping only. All BPE logic lives in `tokenizer-core` and is tested with
 //! plain `cargo test`.
@@ -30,7 +29,6 @@ fn to_py(err: tokenizer_core::Error) -> PyErr {
 
 /// Byte-level BPE tokenizer (Rust core, Python skin).
 ///
-/// Frozen API names (AGENTS.md §5.9): `train / encode / encode_batch /
 /// encode_file_to_bin / decode / save / load`.
 #[pyclass(module = "nanomlx_tokenizer")]
 struct PyTokenizer {
