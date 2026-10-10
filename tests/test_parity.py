@@ -1,11 +1,10 @@
-"""Cross-project parity: Rust (`nanomlx_tokenizer`) vs Python reference.
+"""Rust (`nanomlx_tokenizer`) vs Python reference: ids should match.
 
-M2 acceptance: Rust ids == reference ids on the fixture set AND on a
-randomized corpus, zero mismatches. Run inside the model env
-(`uv run --project model pytest tests/`).
+We check the saved fixtures AND a randomized corpus, zero mismatches.
+Run it in the model env (`uv run --project model pytest tests/`).
 
-The 10 MB randomized corpus is the M2 gate; it is marked slow so the
-default suite stays fast - run it explicitly for milestone sign-off.
+The 10 MB randomized corpus is the big gate. It's marked slow so the
+normal run stays quick. Run it directly when you want the full check.
 """
 
 import json
@@ -108,7 +107,7 @@ def test_fixture_probes_identical(pair):
     ref, rust = pair
     expected = json.loads((FIX / "expected_ids.json").read_text(encoding="utf-8"))
     for text, ids in expected["probes"].items():
-        assert ref.encode(text) == ids  # reference reproduces the fixture
+        assert ref.encode(text) == ids  # python side reproduces the fixture
         assert rust.encode(text) == ids, f"mismatch for {text!r:.60}"
         assert rust.decode(ids) == text
 
@@ -154,7 +153,7 @@ def test_randomized_corpus_fast(pair):
 
 
 def test_long_inputs_parity(pair):
-    """Force-split region (>64K chars) must agree exactly, incl. 1MB runs."""
+    """Long-input chopping (>64K chars) has to agree exactly, 1MB runs too."""
     ref, rust = pair
     docs = [
         "a" * 200_000,
@@ -169,7 +168,7 @@ def test_long_inputs_parity(pair):
 
 @pytest.mark.slow
 def test_randomized_corpus_10mb_gate(pair):
-    """M2 acceptance gate: ≥10 MB mixed text, zero mismatches."""
+    """Big check: 10 MB-plus of mixed text, zero mismatches."""
     ref, rust = pair
     rng = random.Random(20261010)
     n_bytes = 0

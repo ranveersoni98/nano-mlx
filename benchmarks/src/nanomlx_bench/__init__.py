@@ -1,4 +1,4 @@
-"""Shared benchmark helpers: machine specs + JSON result writer"""
+"""Bits shared by the benchmark scripts: machine info plus JSON saving."""
 
 from __future__ import annotations
 
@@ -11,15 +11,15 @@ from typing import Any
 
 
 def _optional(fn: Callable[[], Any]) -> Any | None:
-    """Run a best-effort probe; missing tools/deps yield None, never raise."""
+    """Try something that might not be there. Missing tools just give None."""
     try:
         return fn()
-    except Exception:  # noqa: BLE001 - probing is intentionally best-effort
+    except Exception:  # noqa: BLE001 - probes shouldn't ever crash the bench
         return None
 
 
 def machine_specs() -> dict:
-    """Chip, cores, RAM, OS, and library versions for every result file."""
+    """What chip, cores, RAM, OS, and lib versions this run used. Goes in every file."""
     specs: dict = {
         "chip": platform.machine(),
         "os": platform.mac_ver()[0] or platform.platform(),
@@ -92,7 +92,7 @@ def machine_specs() -> dict:
 
 
 def write_result(name: str, payload: dict) -> Path:
-    """Write benchmarks/results/<name>.json with machine specs attached."""
+    """Save benchmarks/results/<name>.json with the machine info stuck on."""
     results = Path(__file__).resolve().parents[2] / "results"
     results.mkdir(parents=True, exist_ok=True)
     payload = {"machine": machine_specs(), **payload}

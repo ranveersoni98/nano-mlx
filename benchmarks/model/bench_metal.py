@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""M9 stretch bench: custom fused RMSNorm Metal kernel vs built-ins.
+"""Our fused RMSNorm Metal kernel vs the built-ins.
 
-Shapes span real model rows: (2048, 384) tiny-batch, (8192, 512) small,
-(8192, 768) base-ish. Metric: GB/s over input+weight+output traffic.
-Warmup (Metal compile) discarded, median of repeats, mx.eval inside. JSON.
+Shapes match real model rows: (2048, 384) tiny-batch, (8192, 512) small,
+(8192, 768) base-ish. We report GB/s over input+weight+output traffic.
+Warmup (Metal compile) doesn't count, median of repeats, mx.eval inside.
+Saves JSON.
 
-Usage (needs mlx: run with the MODEL env):
+Needs mlx, so run it with the MODEL env:
     uv run --project model python benchmarks/model/bench_metal.py
 """
 
@@ -28,7 +29,7 @@ from nanomlx_bench import write_result
 
 
 def bench(fn, *args, repeats: int = 7):
-    fn(*args)  # warmup (Metal compile for the custom kernel), discarded
+    fn(*args)  # warmup (Metal compile for our kernel), doesn't count
     mx.eval(*[a for a in args if isinstance(a, mx.array)])
     walls = []
     for _ in range(repeats):

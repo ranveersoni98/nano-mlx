@@ -1,5 +1,5 @@
-"""M5 training-loop tests: schedule, decay groups, compile equivalence,
-checkpoint resume (fast: debug preset, tiny bins)."""
+"""Training loop tests: schedule, decay groups, compile matching eager,
+checkpoint resume (fast, debug preset and tiny bins)."""
 
 import mlx.core as mx
 import pytest
@@ -22,7 +22,7 @@ def test_lr_schedule_values():
 
 
 def test_decay_groups_correct():
-    """Zero grads: decay matrices shrink by (1-lr*wd), everything else frozen."""
+    """Zero grads: decay matrices shrink by (1-lr*wd), everything else stays put."""
     mx.random.seed(0)
     cfg = preset("debug", vocab_size=320)
     model = GPT(cfg)
@@ -40,7 +40,7 @@ def test_decay_groups_correct():
             assert bool(mx.allclose(a, expected, atol=1e-7)), f"{k} missing decay"
         else:
             assert bool(mx.allclose(a, b, atol=1e-9)), f"{k} wrongly decayed: {k}"
-    # Spot-check the rule itself.
+    # Spot-check the rule.
     assert is_decay_param("blocks.0.attn.q_proj.weight", before["blocks.0.attn.q_proj.weight"])
     assert not is_decay_param("tok_emb.weight", before["tok_emb.weight"])
     assert not is_decay_param("blocks.0.attn_norm.weight", before["blocks.0.attn_norm.weight"])
@@ -74,7 +74,7 @@ def test_compiled_uncompiled_equivalence():
         return float(loss)
 
     l_eager = run(m1, False)
-    # Fresh optimizer state for the compiled leg (staging order differs).
+    # Fresh optimizer for the compiled side (staging order isn't the same).
     opt2 = build_optimizer(1e-3)
     lag = nn.value_and_grad(m2, ce_loss)
 
@@ -90,7 +90,7 @@ def test_compiled_uncompiled_equivalence():
 
 @pytest.fixture(scope="module")
 def tiny_run(tmp_path_factory):
-    """4-step run with evals+checkpoints; reused by resume test."""
+    """Tiny 4-step run with evals and checkpoints. The resume test reuses it."""
     from pathlib import Path
 
     from nanomlx.data import build_bins
@@ -105,10 +105,10 @@ def tiny_run(tmp_path_factory):
     bins = tmp / "bins"
     build_bins(vocab, tmp / "train.txt", tmp / "val.txt", bins)
     mcfg = preset("debug", vocab_size=320, context=32)
-    # NOTE: the 4-step leg uses the SAME 6-step schedule (total_steps=6) and
-    # stops early via max_steps: the LR schedule depends on total, so a
-    # total_steps=4 run would take different LRs at steps 2-3 and could never
-    # match the uninterrupted 6-step run.
+    # NOTE: the 4-step bit uses the SAME 6-step schedule (total_steps=6) and
+    # just stops early with max_steps. LR depends on total, so a plain
+    # total_steps=4 run would use different LRs at steps 2-3 and could never
+    # match the straight 6-step run.
     tcfg = TrainConfig(
         preset="debug",
         peak_lr=3e-3,
@@ -134,7 +134,7 @@ def test_short_run_logs_and_checkpoints(tiny_run):
 
 
 def test_resume_matches_uninterrupted(tiny_run):
-    """Train 4, resume to 6 == straight 6 (weights allclose)."""
+    """Train 4, resume to 6, should equal a straight 6 (weights allclose)."""
     import json
 
     tmp, bins, vocab, mcfg, tcfg, ckpt, _ = tiny_run

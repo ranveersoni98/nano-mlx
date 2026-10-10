@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plot training curves from a run's metrics.jsonl (never hand-drawn).
+"""Plot training curves from a run's metrics.jsonl (script-made, not hand-drawn).
 
 Usage:
     uv run --project benchmarks python benchmarks/model/plot_loss.py \

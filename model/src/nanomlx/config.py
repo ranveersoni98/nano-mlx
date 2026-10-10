@@ -1,9 +1,8 @@
-"""Model + training configs (M4).
+"""Model + training configs.
 
-Single source for shapes, presets, and parameter accounting. The tokenizer
-(`reference_bpe` / Rust `nanomlx_tokenizer`) owns the vocabulary; the model
-only sees `vocab_size`. Tests use the 320-id fixture vocab, training uses
-the 32k default
+This is where shapes, presets, and param counts live. The tokenizer
+owns the vocab, the model just gets told `vocab_size`. Tests use the
+tiny 320-id fixture vocab, real training uses the 32k one.
 """
 
 from __future__ import annotations
@@ -13,22 +12,22 @@ from dataclasses import dataclass
 
 @dataclass
 class ModelConfig:
-    """Llama-style decoder-only transformer """
+    """Our decoder-only transformer setup. Llama-ish."""
 
     vocab_size: int = 32000
     n_layers: int = 6
     d_model: int = 384
     n_heads: int = 6
-    n_kv_heads: int = 6  # GQA: must divide n_heads
+    n_kv_heads: int = 6  # has to divide n_heads for GQA
     context: int = 256
-    ffn_hidden: int | None = None  # None -> 8/3 * d_model, rounded to mult of 64
+    ffn_hidden: int | None = None  # None means 8/3 * d_model, rounded up to a mult of 64
     rms_eps: float = 1e-5
-    tie_weights: bool = True  # share embedding + LM head
-    bias: bool = False  # no biases anywhere by default
+    tie_weights: bool = True  # reuse embeddings as the output head
+    bias: bool = False  # we just don't use biases
     dropout: float = 0.0
-    attention_impl: str = "manual"  # "manual" always kept; "fast" (mx.fast SDPA) in M7
-    norm_impl: str = "manual"  # "manual" | "fast" (mx.fast.rms_norm) | "metal" (M9 fused kernel)
-    rope_impl: str = "manual"  # "manual" | "fast" (mx.fast.rope, traditional=True)
+    attention_impl: str = "manual"  # keep "manual" around; "fast" uses mx.fast
+    norm_impl: str = "manual"  # "manual" | "fast" (mx.fast.rms_norm) | "metal" (our fused kernel)
+    rope_impl: str = "manual"  # "manual" | "fast" (mx.fast.rope)
     rope_theta: float = 10000.0
 
     def __post_init__(self) -> None:
@@ -52,8 +51,8 @@ class ModelConfig:
         return self.d_model // self.n_heads
 
     def param_count(self, with_embeddings: bool = True) -> int:
-        """Exact parameter count (embeddings dominate small models, so both
-        figures are reported; tests assert this matches the built model)."""
+        """How many params. We report both numbers since embeddings
+        dominate the small models. Tests check this against the real model."""
         f = self.ffn_hidden
         assert f is not None, "ffn_hidden must be set by __post_init__"
         d, h, kv, L, V = (
@@ -80,7 +79,7 @@ class ModelConfig:
 
 @dataclass
 class TrainConfig:
-    """Training loop knobs (owned by M5; declared here so configs ship together)."""
+    """Knobs for the training loop."""
 
     preset: str = "tiny"
     peak_lr: float = 1e-3
@@ -99,8 +98,8 @@ class TrainConfig:
     eps: float = 1e-8
 
 
-# Starting points; tune to actual RAM. Exact counts come
-# from ModelConfig.param_count(), never from this table's approximations.
+# Starting sizes. Tune to whatever RAM you've got. Real counts come
+# from ModelConfig.param_count(), not the comments here.
 PRESETS: dict[str, dict] = {
     "debug": {"n_layers": 2, "d_model": 64, "n_heads": 4, "n_kv_heads": 4, "context": 128},
     "tiny": {"n_layers": 6, "d_model": 384, "n_heads": 6, "n_kv_heads": 6, "context": 256},
@@ -108,7 +107,7 @@ PRESETS: dict[str, dict] = {
     "base": {"n_layers": 12, "d_model": 768, "n_heads": 12, "n_kv_heads": 4, "context": 1024},
 }
 
-# Peak-LR starting points per size.
+# Rough LR starting points per size.
 PRESET_LR: dict[str, float] = {
     "debug": 1e-3,
     "tiny": 1e-3,
@@ -118,7 +117,7 @@ PRESET_LR: dict[str, float] = {
 
 
 def preset(name: str, vocab_size: int = 32000, **overrides) -> ModelConfig:
-    """Build a ModelConfig from a named preset."""
+    """Grab a named preset as a ModelConfig."""
     if name not in PRESETS:
         raise ValueError(f"unknown preset {name!r}; choose from {sorted(PRESETS)}")
     cfg = dict(PRESETS[name])

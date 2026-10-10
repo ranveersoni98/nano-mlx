@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render README benchmark tables from committed results JSON (never hand-typed).
+"""Build the README benchmark tables from the saved results JSON (don't type them by hand).
 
 Usage:
     uv run --project benchmarks python benchmarks/tokenizer/make_readme_table.py
@@ -27,8 +27,8 @@ def model_table() -> list[str]:
     mach = m["machine"]
     lines = [
         (
-            "Model throughput (tiny preset, 32k vocab, random init - throughput is "
-            "weight-independent):"
+            "Model speed (tiny preset, 32k vocab, random init, "
+            "speed doesn't depend on weights):"
         ),
         "",
         "| Train step (batch 4, ctx 256) | tok/s | Peak mem |",
@@ -59,10 +59,10 @@ def model_table() -> list[str]:
     lines += [
         "",
         f"_Power: {mach.get('power_source', '?')} ({mach.get('battery_pct', '?')}%). "
-        + "Warmup soak + discarded warmups; median of repeats with mx.eval inside. "
-        + "Few-ms prefill timings carry laptop variance - relative findings "
-        + "(cache ~2x decode, fast ~1.5x decode, bf16 +~30% train, compile ~+10%, "
-        + "batch sublinear) reproduce across runs._",
+        + "Warmup thrown away, median of repeats with mx.eval inside. "
+        + "Few-ms prefill timings wobble on laptops, so take the relative "
+        + "bits seriously (cache ~2x decode, fast ~1.5x decode, bf16 +~30% "
+        + "train, compile ~+10%, batch goes sublinear), they hold up run to run._",
     ]
     return lines
 
@@ -76,16 +76,16 @@ def main() -> None:
 
     lines = [
         (
-            "<!-- GENERATED from benchmarks/results/*.json by "
-            "benchmarks/tokenizer/make_readme_table.py - do not hand-edit. -->"
+            "<!-- Made from benchmarks/results/*.json by "
+            "benchmarks/tokenizer/make_readme_table.py, don't edit by hand. -->"
         ),
         (
             f"_Machine: {cpu}, {mach.get('ram_gb', '?')}GB RAM, "
             f"Python {mach.get('python', '?')}, {mach.get('rust_version', '')}. "
-            "Release build. Median of repeats; warmup discarded._"
+            "Release build. Median of repeats, warmup thrown away._"
         ),
         "",
-        "Tokenizer encode (same inputs; different vocabs - ids not cross-compared):",
+        "Tokenizer encode (same inputs, different vocabs, so ids aren't compared):",
         "",
         "| Workload | ours (Rust) | HF tokenizers | tiktoken o200k |",
         "|---|---|---|---|",
@@ -120,17 +120,18 @@ def main() -> None:
         )
     lines += [
         "",
-        "Tokenizer training (same 20MB slice, vocab 5000; tiktoken ships no trainer):",
+        "Tokenizer training (same 20MB slice, vocab 5000, tiktoken has no trainer):",
         "",
         "| Implementation | Wall time |",
         "|---|---|",
-        f"| ours (Rust incremental) | {tr['ours_rust_s']}s ({tr['ours_merges']} merges) |",
+        f"| ours (Rust) | {tr['ours_rust_s']}s ({tr['ours_merges']} merges) |",
         f"| HF tokenizers | {tr['hf_tokenizers_s']}s |",
         "",
         (
-            "_Caveats: single-doc inputs use one thread in ours (file and batch "
-            "paths parallelize); tiktoken wins large-file encode because its DFA "
-            "regex stays linear where our backtracking one slows down._"
+            "_Heads up: single-doc inputs only use one thread on our side "
+            "(file and batch paths do parallelize). tiktoken wins big-file "
+            "encode because its regex stays linear where our backtracking "
+            "one slows down._"
         ),
     ]
     print("\n".join(lines))

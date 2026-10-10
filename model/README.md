@@ -1,21 +1,21 @@
 # nanomlx-model
 
-The Python side of nanoMLX: MLX transformer, data pipeline, training loop, and generation. See the [root README](../README.md) for the full story.
+The Python half of nanoMLX: MLX transformer, data loading, training loop, and generation. Root README has the full story.
 
 ## Layout
 
 ```
 src/nanomlx/
-  reference_bpe.py  # Python BPE - the source of truth for the Rust core
-  config.py         # ModelConfig / TrainConfig + debug/tiny/small/base presets
-  model.py          # GPT: manual attention, GQA, RoPE, RMSNorm, SwiGLU (+mx.fast flags)
-  metal.py          # optional custom fused-RMSNorm Metal kernel
-  data.py           # .bin building, memmap loader, batch sampler
+  reference_bpe.py  # Python BPE. The Rust side has to match this.
+  config.py         # ModelConfig / TrainConfig plus debug/tiny/small/base presets
+  model.py          # GPT: hand-written attention, GQA, RoPE, RMSNorm, SwiGLU (plus mx.fast flags)
+  metal.py          # our optional fused-RMSNorm Metal kernel
+  data.py           # .bin building, memmap loading, batch sampling
   train.py          # python -m nanomlx.train
   generate.py       # python -m nanomlx.generate
   utils.py          # seeding, LR schedule, optimizer groups, checkpoints, logging
-tests/              # per-module tests (fast by default; -m slow for the big gates)
-fixtures live under tests/fixtures/ (tiny corpus + golden vocab + expected ids)
+tests/              # tests per file (fast by default, -m slow for the big ones)
+fixtures sit under tests/fixtures/ (tiny corpus plus saved vocab and expected ids)
 ```
 
 ## Common commands (run from repo root)

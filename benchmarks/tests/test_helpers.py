@@ -1,4 +1,4 @@
-"""Smoke tests for shared benchmark helpers."""
+"""Quick check that the shared benchmark helpers work."""
 
 
 def test_machine_specs_keys():

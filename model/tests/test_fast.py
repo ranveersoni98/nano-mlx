@@ -1,9 +1,9 @@
-"""M7 acceptance: manual vs mx.fast numerical equivalence.
+"""Hand-written vs mx.fast should give the same numbers.
 
-Tolerances are stated, not assumed: fp32 must agree tightly (SDPA uses
-different internal blocking than the manual matmul path); bf16 gets a
-documented looser bound. Each op is isolated (rope / norm / attention)
-plus a full-model combined check, with and without KV cache, plain + GQA.
+fp32 has to agree closely (SDPA blocks things differently than our matmul
+path inside). bf16 gets a looser bound, that's expected. Each op on its
+own (rope / norm / attention) plus a full-model check, with and without
+KV cache, plain and GQA.
 """
 
 import mlx.core as mx
@@ -13,8 +13,8 @@ from nanomlx.config import ModelConfig
 from nanomlx.model import GPT, KVCache
 
 VOCAB = 320
-FP32_TOL = 1e-3  # measured 9.8e-05 on debug preset; 10x margin
-BF16_TOL = 5e-2  # measured 2.1e-03; looser bound documented, not a bug
+FP32_TOL = 1e-3  # we see ~9.8e-05 on debug, so 10x headroom
+BF16_TOL = 5e-2  # we see ~2.1e-03, looser bound on purpose
 
 
 def _models(**overrides):
@@ -23,7 +23,7 @@ def _models(**overrides):
     mx.random.seed(0)
     m_manual = GPT(ModelConfig(**base))
     mx.random.seed(0)
-    # Identical init: copy weights (seeds already align, belt and braces).
+    # Same start: copy weights over (seeds already line up, this is just extra sure).
     m_fast = GPT(ModelConfig(**base, attention_impl="fast", norm_impl="fast", rope_impl="fast"))
     m_fast.update(dict(m_manual.parameters()))
     return m_manual, m_fast
@@ -46,7 +46,7 @@ def test_attention_fast_equivalence(kv_heads: int):
 
 
 def test_attention_fast_equivalence_cached():
-    """Fast path agrees under KV-cache decode too (single-token steps)."""
+    """Fast path agrees under KV-cache decode too (one token at a time)."""
     m_manual, m_fast = _models(n_kv_heads=2)
     cm, cf = KVCache(m_manual.cfg, 1), KVCache(m_fast.cfg, 1)
     ids = list(range(1, 17))
@@ -81,7 +81,7 @@ def test_norm_fast_equivalence():
 
 
 def test_bf16_documented_tolerance():
-    """bf16 agrees within the documented looser bound (not a bug)."""
+    """bf16 stays inside the looser bound (that's normal, not a bug)."""
     m_manual, m_fast = _models(n_kv_heads=4)
     m_manual.set_dtype(mx.bfloat16)
     m_fast.set_dtype(mx.bfloat16)

@@ -1,11 +1,11 @@
-"""Memmap data pipeline over `.bin` files (M5).
+"""Loading `.bin` files with memmap.
 
-Flow: raw TinyStories text -> EOS-separated `.bin` (via OUR Rust
-tokenizer, release-built) + `meta.json` -> `np.memmap` loader with hash /
-dtype / size checks -> random-offset batch sampler.
+How it works: raw TinyStories text gets EOS markers stuck between docs,
+our Rust tokenizer (release build, please) encodes it to `.bin` plus a
+`meta.json`, then we load that with `np.memmap` and sample random windows.
 
-Uses `nanomlx_tokenizer` (Rust); falls back to the reference only if the
-extension is missing (slow path, warned).
+We use `nanomlx_tokenizer` (Rust). If it's not built we fall back to the
+pure-Python one, which works but is slow. You'll get a warning.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ _DTYPE_MAP = {"uint16": np.uint16, "uint32": np.uint32}
 
 
 def load_tokenizer(vocab_path: str | Path):
-    """Our Rust tokenizer, else the reference (slow fallback)."""
+    """Load our Rust tokenizer. Falls back to the Python one if needed (slow)."""
     try:
         import nanomlx_tokenizer
 
@@ -54,11 +54,11 @@ def build_bins(
     out_dir: str | Path,
     tmp_suffix: str = ".eos_marked.tmp",
 ) -> dict:
-    """Encode raw text files to EOS-separated train/val `.bin` + meta.json.
+    """Encode raw text files to EOS-separated train/val `.bin` plus meta.json.
 
-    Documents (= lines) are joined with `<|endoftext|>` markers passed as
-    allowed specials, so the `.bin` stream is EOS-separated per §6. Source
-    text must not contain the marker literally (checked; TinyStories has 0).
+    We join docs (= lines) with `<|endoftext|>` markers passed as allowed
+    specials, so the `.bin` stream has EOS between docs. The source text
+    can't contain the marker itself (we check, TinyStories has zero).
     """
     vocab_path, out_dir = Path(vocab_path), Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -68,9 +68,9 @@ def build_bins(
     for split, txt in [("train", Path(train_txt)), ("val", Path(val_txt))]:
         raw = txt.read_bytes()
         if eos.encode() in raw:
-            raise ValueError(f"{txt} contains the EOS marker literally - refusing")
-        # Join docs with EOS markers in a temp file (bounded extra disk, no
-        # extra RAM; deleted afterwards).
+            raise ValueError(f"{txt} contains the EOS marker as text, bailing out")
+        # Join docs with EOS markers in a temp file (a bit of extra disk,
+        # no extra RAM, deleted after).
         tmp = out_dir / f"{split}{tmp_suffix}"
         marker = f"\n{eos}\n".encode()
         with open(txt, "rb") as fin, open(tmp, "wb") as fout:
@@ -91,7 +91,7 @@ def build_bins(
 
 
 def check_bin(bin_path: str | Path, vocab_path: str | Path) -> dict:
-    """Validate a `.bin` against its `meta.json` + vocab (refuses on mismatch)."""
+    """Check a `.bin` against its `meta.json` and vocab. Bails on mismatch."""
     bin_path = Path(bin_path)
     meta_path = bin_path.with_suffix(".meta.json")
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -110,7 +110,7 @@ def check_bin(bin_path: str | Path, vocab_path: str | Path) -> dict:
 
 
 class BinData:
-    """Memory-mapped token stream + validated meta."""
+    """A token stream sitting in a memmap file, plus its checked meta."""
 
     def __init__(self, bin_path: str | Path, vocab_path: str | Path):
         self.meta = check_bin(bin_path, vocab_path)
@@ -123,7 +123,7 @@ class BinData:
 
 
 class BatchSampler:
-    """Random-offset windows: x = d[i:i+T], y = d[i+1:i+T+1] (§8)."""
+    """Random windows: x = d[i:i+T], y = d[i+1:i+T+1]."""
 
     def __init__(self, data: BinData, context: int, seed: int = 1337):
         assert data.n_tokens > context + 1, "not enough tokens for one window"

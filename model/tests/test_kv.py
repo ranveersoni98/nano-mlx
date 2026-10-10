@@ -1,9 +1,9 @@
-"""M6 acceptance: KV-cache greedy == no-cache greedy (exact token match).
+"""KV cache has to match no-cache greedy, token for token.
 
-Prefill processes the whole prompt in one pass; decode runs one token at a
-time with RoPE offset = cached length. Covers plain + GQA configs and
-several prompts (short, unicode, prompt needing left-truncation is excluded
-- both paths truncate identically, tested separately).
+Prefill eats the whole prompt in one pass, decode goes one token at a
+time with RoPE offset = how much is cached. We cover plain and GQA
+configs and a few prompts (short, unicode, etc. Left-truncation truncates
+the same on both sides, tested separately).
 """
 
 import mlx.core as mx
@@ -59,16 +59,16 @@ def test_cache_equivalence_greedy(gqa: bool, prompt: str):
         use_cache=False,
     )
     assert cached == nocache, f"diverged on {prompt!r}: {cached} vs {nocache}"
-    # Both paths hit the same context cap (no eos_id): 64 - len(prompt ids).
+    # Both sides hit the same context cap (no eos_id here): 64 minus prompt len.
     assert len(cached) == min(20, 64 - len(enc(prompt)))
 
 
 def test_cache_sampling_deterministic():
-    """Same seed + temperature: repeated cached runs agree exactly.
+    """Same seed plus temperature: cached runs agree with each other exactly.
 
-    (Cached vs uncached *sampling* is not asserted: fp summation order
-    differs between prefix-sliced and full attention, so draws can differ.
-    Greedy equivalence above is the exact gate per §9/M6.)
+    (Cached vs uncached *sampling* isn't checked: float adding happens in a
+    different order between prefix-sliced and full attention, so draws can
+    differ. Greedy matching above is the real check.)
     """
     mx.random.seed(12)
     model = GPT(preset("debug", vocab_size=VOCAB, context=64))
@@ -80,7 +80,7 @@ def test_cache_sampling_deterministic():
 
 
 def test_prefill_single_pass_shapes():
-    """Prefill consumes the whole prompt at once (one forward, full width)."""
+    """Prefill takes the whole prompt at once (one forward, full width)."""
     from nanomlx.model import KVCache
 
     mx.random.seed(13)
@@ -93,15 +93,15 @@ def test_prefill_single_pass_shapes():
     cache.seq_len = len(ids)
     assert logits.shape == (1, 24, VOCAB)
     assert cache.seq_len == 24
-    # One decode step narrows to a single position.
+    # One decode step is just a single spot.
     logits = model(mx.array([[ids[-1]]]), offset=cache.seq_len, caches=cache.layers)
     mx.eval(logits)
     assert logits.shape == (1, 1, VOCAB)
 
 
 def test_first_token_comes_from_prefill():
-    """Off-by-one guard: token N must equal argmax of the full-forward
-    logits at the last prompt position (not a re-fed duplicate)."""
+    """Off-by-one guard: token N has to equal argmax of the full forward
+    at the last prompt spot (not some re-fed dupe)."""
     mx.random.seed(14)
     model = GPT(preset("debug", vocab_size=VOCAB, context=64))
     enc, dec = _codec()

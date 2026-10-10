@@ -1,9 +1,9 @@
-"""Py reference BPE.
+"""Our Python BPE reference.
 
-Covers round-trip on English, code (Python/Rust/JSON),
-emoji + ZWJ sequences, CJK, Hindi/Devanagari, Arabic (RTL), combining
-characters, whitespace runs, tabs/newlines/CRLF, empty string, single byte,
-special-token handling, plus training determinism and save/load.
+Checks round-trip on English, code (Python/Rust/JSON), emoji + ZWJ bits,
+CJK, Hindi, Arabic, combining chars, whitespace, tabs/newlines/CRLF,
+empty string, single byte, special-token handling, plus training giving
+the same thing twice and save/load.
 """
 
 import pytest
@@ -78,7 +78,7 @@ def test_training_deterministic():
 
 def test_vocab_layout(tok: Tokenizer):
     assert tok.vocab_size == 256 + len(tok.merges) + len(tok.special_tokens)
-    # Specials live at the end of id space.
+    # Specials sit at the end of id space.
     base = 256 + len(tok.merges)
     assert tok.special_to_id["<|endoftext|>"] == base
     assert tok.special_to_id["<|pad|>"] == base + 1
@@ -88,7 +88,7 @@ def test_special_tokens_default_to_plain_text(tok: Tokenizer):
     ids_plain = tok.encode("<|endoftext|>")
     ids_allowed = tok.encode("<|endoftext|>", allowed_special="all")
     assert ids_allowed == [tok.special_to_id["<|endoftext|>"]]
-    assert ids_plain != ids_allowed  # encoded as ordinary pieces
+    assert ids_plain != ids_allowed  # plain text gets split into normal pieces
     assert tok.decode(ids_plain) == "<|endoftext|>"
 
 
@@ -115,7 +115,7 @@ def test_invalid_id_rejected(tok: Tokenizer):
 
 
 def test_decode_strict_option(tok: Tokenizer):
-    # Lone high byte is invalid UTF-8 on its own.
+    # A lone high byte isn't valid UTF-8 on its own.
     lone = tok.encode_bytes(b"\xff")
     assert tok.decode(lone) == "�"
     with pytest.raises(UnicodeDecodeError):
@@ -127,7 +127,7 @@ def test_bytes_path_round_trip(tok: Tokenizer):
     for blob in blobs:
         ids = tok.encode_bytes(blob)
         assert tok.decode(ids).encode("utf-8", errors="replace") is not None
-        # Byte-exact round trip through the lossy-tolerant path:
+        # Byte-exact round trip:
         raw = bytearray()
         for i in ids:
             if i < len(tok.token_bytes):
@@ -171,7 +171,7 @@ def test_encode_file_to_bin(tok: Tokenizer, tmp_path):
 
 
 def test_huge_single_chunk(tok: Tokenizer):
-    # Engine ceiling: 1 MB runs are force-split, never an error.
+    # Big runs get chopped up, never error.
     for big in ["a" * 1_000_000, " " * 1_000_000, "abあ " * 250_000]:
         ids = tok.encode(big)
         assert tok.decode(ids) == big
@@ -180,4 +180,4 @@ def test_huge_single_chunk(tok: Tokenizer):
 def test_force_split_threshold_constant():
     from nanomlx.reference_bpe import MAX_SEGMENT_CHARS
 
-    assert MAX_SEGMENT_CHARS == 65_536  # must match Rust pretokenize.rs
+    assert MAX_SEGMENT_CHARS == 65_536  # has to match Rust pretokenize.rs

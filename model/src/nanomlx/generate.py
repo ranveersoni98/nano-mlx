@@ -1,10 +1,10 @@
-"""Text generation (M6): KV-cache prefill/decode + sampling + CLI.
+"""Text generation: KV-cache prefill/decode plus sampling plus CLI.
 
-Prefill runs the whole prompt in one forward pass (filling the cache);
-decode runs one token at a time. Sampling order is fixed (§9):
-repetition penalty -> temperature -> top-k -> top-p -> softmax -> sample.
-Stops on EOS, --max-new-tokens, or context overflow (left-truncate,
-documented; never silently corrupt RoPE positions).
+Prefill runs the whole prompt in one go (fills the cache), decode runs
+one token at a time. Sampling always goes in this order: repetition
+penalty, then temperature, then top-k, then top-p, then softmax, then
+sample. We stop on EOS, on --max-new-tokens, or when we'd overflow
+context (we left-truncate and say so, never silently mess up positions).
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from nanomlx.utils import unflatten_params
 
 
 def load_model(ckpt_dir: str | Path, vocab_size: int) -> tuple[GPT, ModelConfig, dict]:
-    """Load weights + config from a training checkpoint."""
+    """Load weights and config back from a training checkpoint."""
     ckpt_dir = Path(ckpt_dir)
     metas = sorted(ckpt_dir.glob("step_*/meta.json"))
     if not metas:
@@ -47,8 +47,8 @@ def sample_next(
     recent: list[int],
     rng: np.random.Generator,
 ) -> int:
-    """Single next-token sample. Fixed order: rep-penalty -> temp -> top-k
-    -> top-p -> softmax -> sample. temperature 0 = greedy."""
+    """Pick the next token. Order is fixed: rep-penalty, temp, top-k,
+    top-p, softmax, sample. Temperature 0 means greedy."""
     l = logits.astype(np.float64)
     if repetition_penalty != 1.0 and recent:
         for t in set(recent):
@@ -77,14 +77,13 @@ def sample_next(
 
 
 class _Streamer:
-    """Incremental terminal output: prints only text not shown before.
+    """Prints new text as it comes in, without reprinting everything.
 
-    Decodes the full id list each step but emits just the new suffix, so
-    terminals show one growing line instead of N full reprints. A trailing
-    replacement char (token split mid-UTF-8-sequence) is held back until it
-    resolves - printing it would leave permanent junk. Invariant: `printed`
-    only advances over exact prefix matches, so it stays a true prefix of
-    every future decode (UTF-8 decoding is stateless per character).
+    We decode the full id list each step but only print the new tail, so
+    the terminal shows one growing line. A trailing replacement char means
+    we split a UTF-8 sequence mid-token, so we hold it back until it
+    resolves instead of printing junk. `printed` only moves forward on
+    exact prefix matches, so it stays a true prefix of every future decode.
     """
 
     def __init__(self, decode):
@@ -94,7 +93,7 @@ class _Streamer:
     def show(self, ids: list[int]) -> None:
         text = self.decode(ids)
         if not text.startswith(self.printed):
-            # Recovery path (unreachable while the invariant holds): resync.
+            # Shouldn't happen while the prefix rule holds, but resync if it does.
             print(flush=True)
             print(text, end="", flush=True)
             self.printed = text
@@ -121,8 +120,8 @@ def generate(
     stream: bool = False,
     use_cache: bool = True,
 ) -> list[int]:
-    """Generate with prefill + cached decode (M6). `use_cache=False` keeps
-    the M5 full-re-forward path (equivalence-tested)."""
+    """Generate with prefill plus cached decode. `use_cache=False` keeps
+    the old full-re-forward path (we test that both agree)."""
     rng = np.random.default_rng(seed)
     ids = list(encode(prompt))
     context = model.cfg.context
@@ -147,16 +146,16 @@ def generate(
 
     if use_cache:
         cache = KVCache(model.cfg, batch_size=1)
-        # Prefill: whole prompt in one pass. Its LAST logits already predict
-        # token N - sample it directly (re-feeding ids[-1] at offset N would
-        # duplicate that token into the cache at the wrong position).
+        # Prefill the whole prompt in one pass. Its LAST logits already
+        # predict the next token, so sample that directly (feeding ids[-1]
+        # back in at offset N would put a dupe token in the cache).
         logits = step_logits(ids, 0, cache.layers)
         mx.eval(*[c["k"] for c in cache.layers], *[c["v"] for c in cache.layers])
         cache.seq_len = len(ids)
         nxt = take(logits)
         if not (eos_id is not None and nxt == eos_id):
-            # Guard on len(out): decode at offset=len(out) writes that row,
-            # valid iff < context (seq_len tracks len(out) throughout).
+            # len(out) is the next offset to write. That's only valid while
+            # it's still under context (seq_len tracks len(out) the whole time).
             while len(out) - len(ids) < max_new_tokens and len(out) < context:
                 nxt = take(step_logits([out[-1]], cache.seq_len, cache.layers))
                 cache.seq_len += 1
@@ -171,8 +170,8 @@ def generate(
 
 
 def _call(tok, name: str):
-    """Method-or-attribute access: Rust exposes merges()/special_tokens()
-    as methods, the reference as attributes."""
+    """Get a method-or-attribute: the Rust tokenizer exposes merges() and
+    special_tokens() as methods, the Python one as plain attributes."""
     attr = getattr(tok, name)
     return attr() if callable(attr) else attr
 
@@ -222,7 +221,7 @@ def main() -> None:
         seed=args.seed,
         stream=True,
     )
-    print()  # deltas already streamed above; just end the line
+    print()  # the deltas above already streamed, this just ends the line
 
 
 if __name__ == "__main__":

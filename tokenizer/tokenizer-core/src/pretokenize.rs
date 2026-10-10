@@ -1,22 +1,23 @@
-//! Pre-tokenization: split text into chunks with the shared regex.
+//! Pre-tokenization: chop text into chunks with the shared regex.
 //!
-//! The pattern lives in `tokenizer/patterns/o200k_style.txt` - the **single
-//! source of truth**. It is baked in with `include_str!` (trailing newline
-//! trimmed: a literal `\n` here would otherwise become part of the pattern)
-//! and compiled **once per thread** (see below), so `pretokenize` stays a
+//! The pattern lives in `tokenizer/patterns/o200k_style.txt` and that's the
+//! only copy. We bake it in with `include_str!` (trimming the trailing
+//! newline, since a literal `\n` here would end up inside the pattern)
+//! and compile it once per thread (see below), so `pretokenize` stays cheap.
 //!
-//! Engine notes:
-//! - Style is o200k-like (GPT-4o / Llama-3 family): case-aware word pieces,
-//!   contractions, numbers in runs of ≤3 digits, punctuation runs, whitespace
-//!   with lookahead. Lookahead needs backtracking ⇒ `fancy-regex` on the Rust
-//!   side, the third-party `regex` module on the Python side.
-//! - Known Unicode-class differences (`\p{Lu}` etc. between Rust
-//!   `fancy-regex` -> `regex-syntax` and Python `regex`) are treated as bugs
-//!   at the pattern level, never papered over per-call site. If a parity
-//!   test fails on Devanagari / emoji / combining marks first suspect this.
-//! - `fancy_regex::Regex` is kept in a thread-local rather than inside
+//! How it works:
+//! - Roughly o200k style (GPT-4o / Llama-3 family): case-aware word bits,
+//!   contractions, numbers in runs of up to 3 digits, punctuation runs,
+//!   whitespace with lookahead. Lookahead needs backtracking, so that's
+//!   `fancy-regex` on the Rust side and the third-party `regex` crate on
+//!   the Python side.
+//! - If Unicode classes (`\p{Lu}` etc.) ever disagree between Rust
+//!   `fancy-regex` and Python `regex`, that's a bug in the pattern file,
+//!   not something to work around per call. If a check fails on Devanagari
+//!   / emoji / combining marks, look here first.
+//! - `fancy_regex::Regex` sits in a thread-local instead of inside
 //!   [`crate::Tokenizer`] so `&Tokenizer` stays `Send + Sync` for rayon
-//!   without depending on the engine's auto-trait impls.
+//!   without depending on how the engine implements its auto traits.
 
 use std::cell::RefCell;
 
@@ -26,13 +27,12 @@ use crate::error::{Error, Result};
 
 const PATTERN_RAW: &str = include_str!("../../patterns/o200k_style.txt");
 
-/// Hard ceiling for one regex input, in Unicode scalar values.
+/// Longest we'll hand the regex in one go, in chars.
 ///
-/// `fancy-regex` 0.14 has a hardcoded 1M-entry backtrack stack (`MAX_STACK`
-/// in its VM, not tunable via `RegexBuilder`). Measured 2026-10-10 (M5,
-/// release): 524 KB letter/space runs match fine, 1 MB runs overflow.
-/// 64K chars keeps ~8x margin under the observed pass point. Longer
-/// segments are force-split at char boundaries (see below) - never an
+/// `fancy-regex` 0.14 has a fixed 1M-entry backtrack stack (MAX_STACK in its
+/// VM, not tunable). We measured on 2026-10-10 (release): 524 KB runs of
+/// letters/spaces are fine, 1 MB runs blow up. 64K chars leaves us ~8x
+/// headroom. Longer bits get chopped at char edges (see below). Never an
 /// error, never a panic.
 pub const MAX_SEGMENT_CHARS: usize = 65_536;
 
@@ -46,10 +46,11 @@ thread_local! {
     static CACHED_RE: RefCell<Option<Regex>> = const { RefCell::new(None) };
 }
 
-/// Run `f` with the thread's compiled pattern, compiling on first use.
+/// Run `f` with this thread's compiled pattern, compiling on first use.
 ///
-/// The pattern is bundled, not user input, so a compile failure means the
-/// repo file was corrupted; it surfaces as [`Error::Regex`], never a panic.
+/// The pattern ships with the repo, it's not user input, so if it won't
+/// compile the file got corrupted. That comes back as [`Error::Regex`],
+/// never a panic.
 fn with_regex<T>(f: impl FnOnce(&Regex) -> Result<T>) -> Result<T> {
     CACHED_RE
         .try_with(|cell| {
@@ -66,8 +67,8 @@ fn with_regex<T>(f: impl FnOnce(&Regex) -> Result<T>) -> Result<T> {
         .map_err(|_| Error::ThreadLocal("compiled regex"))?
 }
 
-/// Split `text` into pieces of at most [`MAX_SEGMENT_CHARS`] chars at char
-/// boundaries. Short inputs return a single piece (zero-cost fast path).
+/// Chop `text` into bits of at most [`MAX_SEGMENT_CHARS`] chars on char
+/// edges. Short inputs come back as one piece (fast path, costs nothing).
 pub fn split_long_segment(text: &str) -> Vec<&str> {
     if text.chars().count() <= MAX_SEGMENT_CHARS {
         return vec![text];
@@ -87,17 +88,16 @@ pub fn split_long_segment(text: &str) -> Vec<&str> {
     pieces
 }
 
-/// Split `text` at regex match boundaries, returning borrowed chunks.
+/// Split `text` on regex match edges, returning borrowed chunks.
 ///
-/// Segments longer than [`MAX_SEGMENT_CHARS`] are force-split first (engine
-/// ceiling, documented above). Consequences, all intentional and covered by
-/// tests: merges never cross a force-split; the Python reference implements
-/// the identical rule so parity holds; short inputs are byte-identical to
-/// no-split matching.
+/// Longer bits than [`MAX_SEGMENT_CHARS`] get chopped first (regex limit,
+/// explained above). All on purpose and covered by tests: merges never
+/// cross a chop, the Python side does the exact same chopping so both agree,
+/// short inputs come out byte-identical to not chopping.
 ///
-/// Matches are non-overlapping and cover the text gaps fully: every byte of
-/// `text` appears in exactly one chunk (gaps between matches are kept as
-/// their own chunks - e.g. characters the pattern skips still tokenize).
+/// Matches don't overlap and cover the gaps too: every byte of `text` lands
+/// in exactly one chunk (stuff between matches is kept as its own chunk,
+/// so chars the pattern skips still get tokenized).
 pub fn pretokenize(text: &str) -> Result<Vec<&str>> {
     with_regex(|re| {
         let mut chunks = Vec::new();
@@ -123,8 +123,8 @@ fn pretokenize_piece<'a>(re: &Regex, text: &'a str, chunks: &mut Vec<&'a str>) -
                     chunks.push(&text[s..e]);
                     pos = e;
                 } else {
-                    // Zero-width match: must not spin. Advance one char.
-                    // (Our pattern never produces these; belt and braces.)
+                    // Zero-width match: can't sit still or we'd spin.
+                    // (Our pattern never makes these, this is just extra safety.)
                     let next = text[pos..]
                         .char_indices()
                         .nth(1)
@@ -151,12 +151,12 @@ pub enum Split<'t> {
     Text(&'t str),
 }
 
-/// Split `text` on exact occurrences of `allowed` special-token strings.
+/// Split `text` on exact hits of the `allowed` special-token strings.
 ///
-/// Specials are matched **before** the regex and are never split or merged.
-/// Anything not in `allowed` stays ordinary text (tiktoken-style default:
-/// user data cannot inject control tokens by accident). Longest match wins
-/// at each position so overlapping names (e.g. `<|a|>` vs `<|ab|>`) behave.
+/// Specials match before the regex runs and never get split or merged.
+/// Anything not in `allowed` stays normal text (tiktoken-style default, so
+/// user data can't sneak in control tokens). Longest match wins at each spot
+/// so overlapping names (like `<|a|>` vs `<|ab|>`) behave.
 pub fn split_special<'t>(text: &'t str, allowed: &[&'t str]) -> Vec<Split<'t>> {
     if allowed.is_empty() || text.is_empty() {
         return if text.is_empty() {
@@ -270,7 +270,7 @@ mod tests {
 
     #[test]
     fn huge_single_chunk_never_overflows() {
-        // M2 acceptance: 1 MB of one byte must encode, not error.
+        // 1 MB of one byte has to encode, not error.
         let big = "a".repeat(1_000_000);
         let chunks = pretokenize(&big).expect("pretokenize 1MB");
         assert_eq!(chunks.concat(), big);

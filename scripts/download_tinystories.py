@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Download raw training text into data/ (gitignored).
+"""Fetch the raw training text into data/ (gitignored).
 
-M5 uses TinyStories train+validation; this script only fetches and stores
-the raw text (tokenizing to .bin happens in M5 with the trained 32k vocab).
-Re-running is idempotent: existing files are left alone.
+We use TinyStories train+validation. This only downloads and saves the
+raw text (turning it into .bin files happens later with the trained 32k
+vocab). Safe to rerun: files that exist get left alone.
 
 Usage:
     uv run --project model python scripts/download_tinystories.py [--limit N]

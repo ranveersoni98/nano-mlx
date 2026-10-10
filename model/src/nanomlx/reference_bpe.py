@@ -1,14 +1,13 @@
-"""Python byte-level BPE.
+"""Python byte-level BPE. This is the reference the Rust side has to match.
 
-The Rust core (`tokenizer-core`) must reproduce this module's ids exactly.
-Frozen rules this file defines:
-- §5.1 ID layout: 0-255 bytes, then merges in order, then specials.
-- §5.4 deterministic tie-breaks: highest count, then smallest (left, right).
-- §6 `.bin` / `meta.json` format and the u16-iff-vocab<64k dtype rule.
+The rules that matter live here:
+- ID layout: 0-255 are raw bytes, then merges in order, then specials.
+- Tie-breaks: highest count wins, then the smallest (left, right) pair.
+- `.bin` / `meta.json` format and the u16-if-vocab-under-64k dtype rule.
 
-The pre-tokenization regex is loaded from
-`tokenizer/patterns/o200k_style.txt` (never duplicated here).
-Needs the third-party `regex` module (Unicode \\p{...} classes + lookahead).
+The pre-tokenizer regex lives in `tokenizer/patterns/o200k_style.txt`
+(only there, never copied here). Needs the third-party `regex` package
+for Unicode \\p{...} classes and lookahead.
 """
 
 from __future__ import annotations
@@ -26,11 +25,11 @@ import regex as _re
 SAVE_VERSION = 1
 DEFAULT_SPECIAL_TOKENS = ["<|endoftext|>", "<|pad|>"]
 
-#: Hard ceiling for one regex input, in chars. Identical rule to Rust
-#: `pretokenize::MAX_SEGMENT_CHARS` (fancy-regex has a hardcoded 1M-entry
-#: backtrack stack; 1 MB letter runs overflow it, 64K chars keeps ~8x
-#: margin). Longer segments are force-split at char boundaries in both
-#: implementations so parity holds; merges never cross a force-split.
+#: Longest we'll feed the regex in one go, in chars. Same rule as Rust
+#: `pretokenize::MAX_SEGMENT_CHARS` (fancy-regex has a fixed 1M-entry
+#: backtrack stack; 1 MB letter runs blow it up, 64K chars leaves us about
+#: 8x headroom). Longer bits get chopped at char boundaries on both sides
+#: so they still agree. Merges never cross a chop.
 MAX_SEGMENT_CHARS = 65_536
 
 
@@ -41,7 +40,7 @@ def _split_long_segment(text: str) -> list[str]:
 
 
 def _pattern_path() -> Path:
-    """Locate the single-source-of-truth pattern file from any cwd."""
+    """Find the pattern file no matter what cwd we're run from."""
     here = Path(__file__).resolve()
     for parent in [here, *here.parents]:
         cand = parent / "tokenizer" / "patterns" / "o200k_style.txt"
@@ -57,7 +56,7 @@ def load_pattern() -> str:
 
 
 def fnv1a64(data: bytes) -> int:
-    """Portable FNV-1a-64. Must match Rust `vocab::fnv1a64` exactly."""
+    """Plain FNV-1a-64. Has to match the Rust `vocab::fnv1a64` exactly."""
     h = 0xCBF29CE484222325
     for b in data:
         h ^= b
@@ -66,11 +65,11 @@ def fnv1a64(data: bytes) -> int:
 
 
 def _split_utf8_runs(data: bytes):
-    """Yield `(is_valid, chunk)` with maximal valid-UTF-8 runs.
+    """Yield `(is_valid, chunk)` with the longest valid-UTF-8 runs.
 
-    Invalid bytes surface one at a time; each becomes a single-byte token,
-    mirroring Rust `str::utf8_chunks` handling on the bytes path. Exact run
-    boundaries need not match Rust - only the emitted ids must.
+    Bad bytes come out one at a time and each becomes a single-byte token,
+    same as the Rust side's `str::utf8_chunks` handling on the bytes path.
+    The exact run edges don't have to line up with Rust, only the ids do.
     """
 
     def seq_len(d: bytes, i: int) -> int:
@@ -120,7 +119,7 @@ def _split_utf8_runs(data: bytes):
 
 
 class Tokenizer:
-    """Byte-level BPE tokenizer (reference implementation)."""
+    """Byte-level BPE tokenizer (the Python reference)."""
 
     def __init__(
         self,
@@ -163,8 +162,8 @@ class Tokenizer:
     ) -> Tokenizer:
         """Train on files (paths that exist) or raw strings.
 
-        Accepts a single path/str or a list mixing both: entries resolving
-        to an existing file are read, anything else is literal text.
+        Takes one path/str or a list mixing both. If an entry points at a
+        real file we read it, otherwise we treat it as literal text.
         """
         specials = list(special_tokens) if special_tokens else list(DEFAULT_SPECIAL_TOKENS)
         if isinstance(files_or_texts, (str, Path)):
@@ -173,19 +172,19 @@ class Tokenizer:
         for item in files_or_texts:
             p = Path(item) if isinstance(item, str) else item
             if isinstance(p, Path) and p.exists() and p.is_file():
-                # newline="": no universal-newline translation. Training must
-                # see exact bytes (Rust reads raw); translating \r\n -> \n
-                # silently changes merges (caught by training parity).
+                # newline="": don't translate newlines. Training has to see
+                # the exact bytes (Rust reads raw). Turning \r\n into \n
+                # quietly changes the merges (our training check caught this).
                 with open(p, encoding="utf-8", errors="surrogateescape", newline="") as f:
                     texts.append(f.read())
             else:
                 texts.append(item if isinstance(item, str) else str(item))
-        # Surrogateescape keeps file bytes recoverable; lone surrogates are
-        # treated as ordinary (non-merging) content during counting.
+        # Surrogateescape keeps file bytes recoverable. Lone surrogates just
+        # sit there as ordinary content and never merge while counting.
         pattern = _re.compile(load_pattern())
         # One pass: matches are words, and so are the gaps between them
-        # (Rust parity - every byte belongs to exactly one chunk). Long
-        # texts are force-split first, exactly like Rust pretokenize.
+        # (same as Rust, every byte lands in exactly one chunk). Long texts
+        # get chopped up first, exactly like Rust pretokenize.
         words: Counter[str] = Counter()
         for text in texts:
             for piece in _split_long_segment(text):
@@ -198,7 +197,7 @@ class Tokenizer:
                         words[m.group()] += 1
                         pos = e
                     elif e == s and pos < len(piece):
-                        # Zero-width guard (pattern never emits these).
+                        # Zero-width guard (our pattern never makes these).
                         words[piece[pos : pos + 1]] += 1
                         pos += 1
                 if pos < len(piece):
@@ -220,14 +219,16 @@ class Tokenizer:
             top = max(counts.values())
             if top < 2:
                 break
-            # Frozen tie-break (§5.4): highest count, then smallest pair.
+            # Tie-break: highest count, then the smallest pair. Keep this
+            # frozen, both sides have to do it the same way.
             best = min(p for p, c in counts.items() if c == top)
             new_id = 256 + len(merges)
             merges.append(best)
             left, right = best
             for w, ids in word_tokens.items():
                 if left not in ids or right not in ids:
-                    # Cheap prefilter; full check below.
+                    # Quick skip for words that can't contain the pair.
+                    # Full check happens below.
                     pass
                 merged: list[int] = []
                 i = 0
@@ -271,11 +272,9 @@ class Tokenizer:
         if chunk in self.bytes_to_id:
             return [self.bytes_to_id[chunk]]
         ids = list(chunk)
-        # Merge all non-overlapping occurrences of the lowest-rank pair per
-        # pass, then rescan. Output-identical to merging one occurrence at a
-        # time (ranks are unique, so the global minimum is unambiguous), but
-        # passes are bounded by the number of firing merges instead of the
-        # number of occurrences.
+        # Each pass merges every non-overlapping hit of the lowest-rank pair,
+        # then we rescan. Same output as merging one hit at a time (ranks are
+        # unique so the global min is unambiguous), but way fewer passes.
         while len(ids) >= 2:
             best_rank = None
             for i in range(len(ids) - 1):
@@ -299,7 +298,7 @@ class Tokenizer:
         return ids
 
     def encode(self, text: str, allowed_special: str | set[str] = "none") -> list[int]:
-        """Encode text. `allowed_special`: "none" (default), "all", or a set."""
+        """Encode text. `allowed_special` is "none" (default), "all", or a set."""
         if allowed_special == "none":
             allowed: set[str] = set()
         elif allowed_special == "all":
@@ -324,7 +323,7 @@ class Tokenizer:
                         out.extend(self._encode_chunk(m.group().encode("utf-8")))
                         pos = e
                     elif e == s:
-                        # Zero-width guard (pattern never emits these).
+                        # Zero-width guard (our pattern never makes these).
                         out.extend(self._encode_chunk(piece[pos : pos + 1].encode("utf-8")))
                         pos += 1
                 if pos < len(piece):
@@ -348,11 +347,11 @@ class Tokenizer:
     def encode_file_to_bin(
         self, in_path: str | Path, out_path: str | Path, allowed_special: str | set[str] = "none"
     ) -> dict:
-        """Encode a file to `.bin` (+ `meta.json`); the MLX pipeline input."""
+        """Encode a file to `.bin` plus `meta.json`. This is what the MLX side reads."""
         started = time.perf_counter()
         data = Path(in_path).read_bytes()
         ids = self.encode_bytes(data, allowed_special)
-        use_u16 = self.vocab_size < 65536  # frozen dtype rule
+        use_u16 = self.vocab_size < 65536  # small vocabs fit in u16
         dtype = "uint16" if use_u16 else "uint32"
         fmt = "<" + ("H" * len(ids) if use_u16 else "I" * len(ids))
         Path(out_path).write_bytes(struct.pack(fmt, *ids) if ids else b"")
@@ -364,9 +363,9 @@ class Tokenizer:
             "vocab_size": self.vocab_size,
             "n_tokens": len(ids),
             "eos_id": eos,
-            # Fingerprint of the training pattern; the loader compares it
-            # for equality. (Key name follows the frozen .bin schema; the
-            # value is FNV-1a until a hashing dependency is approved.)
+            # What pattern this vocab was trained with. The loader compares
+            # it for equality. (The key name is part of the file format, the
+            # value is FNV-1a until we pull in a real hash dep.)
             "tokenizer_sha256": f"{self.pattern_hash():016x}",
             "source": str(in_path),
             "created": datetime.datetime.now(datetime.UTC).isoformat(),
@@ -382,7 +381,8 @@ class Tokenizer:
 
     # -- decoding ----------------------------------------------------------
     def decode(self, ids: list[int], strict: bool = False) -> str:
-        """Ids -> str. Replacement character by default; `strict` raises."""
+        """Ids back to str. Gives you replacement chars by default, pass
+        `strict=True` to raise instead."""
         vocab = self.vocab_size
         specials_base = len(self.token_bytes)
         buf = bytearray()

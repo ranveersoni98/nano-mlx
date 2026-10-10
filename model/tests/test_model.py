@@ -1,7 +1,7 @@
-"""MLX model's sanity check lol
+"""Basic checks that the MLX model works lol
 
-Vocab comes from our own tokenizer: the 320-id fixture vocab grounds
-`vocab_size` (frozen default 32k is used in real training, not tests).
+Vocab comes from our own tokenizer: the 320-id fixture vocab pins
+`vocab_size` (the 32k default is for real training, not tests).
 """
 
 import mlx.core as mx
@@ -35,7 +35,7 @@ def test_forward_shapes(debug_cfg: ModelConfig):
 
 
 def test_causality(debug_cfg: ModelConfig):
-    """Changing token t must not move logits at positions < t."""
+    """Changing token t shouldn't move logits before t."""
     model = GPT(debug_cfg)
     base = _ids(2, 16)
     altered = mx.array(base.tolist())
@@ -88,13 +88,13 @@ def test_grads_finite_and_nonzero(debug_cfg: ModelConfig):
     walk(grads)
     assert flat, "no parameters found"
     for name, g in flat:
-        assert mx.all(mx.isfinite(g)), f"non-finite grad: {name}"
-        assert float(mx.max(mx.abs(g))) > 0, f"dead parameter (zero grad): {name}"
+        assert mx.all(mx.isfinite(g)), f"bad grad (not finite): {name}"
+        assert float(mx.max(mx.abs(g))) > 0, f"dead param (zero grad): {name}"
 
 
 def test_overfit_one_batch(debug_cfg: ModelConfig):
-    """Tiny config must drive a single fixed batch below 0.05 (M4 gate).
-    If this fails the model/optimizer is wrong - do not proceed to M5."""
+    """The tiny config has to nail one fixed batch under 0.05.
+    If this fails something's off in the model or optimizer, don't go further."""
     mx.random.seed(7)
     model = GPT(debug_cfg)
     opt = optim.AdamW(learning_rate=3e-3, betas=(0.9, 0.95), eps=1e-8)
@@ -117,11 +117,12 @@ def test_overfit_one_batch(debug_cfg: ModelConfig):
         if final < 0.05:
             break
     print(f"\noverfit: loss={final:.4f} at step={step}")
-    assert final < 0.05, f"failed to overfit single batch (loss={final:.4f})"
+    assert final < 0.05, f"couldn't overfit one batch (loss={final:.4f})"
 
 
 def test_gqa_runs_and_matches_tiled_reference():
-    """GQA (kv < heads) must equal full-head attention with tiled KV weights."""
+    """GQA (fewer kv heads than q heads) should match full-head attention
+    with tiled KV weights."""
     mx.random.seed(3)
     cfg = ModelConfig(vocab_size=VOCAB, n_layers=1, d_model=32, n_heads=4, n_kv_heads=2, context=16)
     gqa = CausalSelfAttention(cfg)
@@ -129,9 +130,9 @@ def test_gqa_runs_and_matches_tiled_reference():
         vocab_size=VOCAB, n_layers=1, d_model=32, n_heads=4, n_kv_heads=4, context=16
     )
     ref = CausalSelfAttention(ref_cfg)
-    # Tile GQA's k/v/o weights into the full-head reference. Linear weights
-    # are (out, in): reshape to (kv_heads, head_dim, in) so the repeat
-    # duplicates whole heads ([kv0,kv0,kv1,kv1]), not individual rows.
+    # Tile GQA's k/v/o weights into the full-head version. Linear weights
+    # are (out, in), so reshape to (kv_heads, head_dim, in) to repeat
+    # whole heads ([kv0,kv0,kv1,kv1]) instead of single rows.
     ref.q_proj.weight = gqa.q_proj.weight
     kv, hd, d = 2, cfg.head_dim, cfg.d_model
     ref.k_proj.weight = mx.repeat(gqa.k_proj.weight.reshape(kv, hd, d), 2, axis=0).reshape(

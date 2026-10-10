@@ -1,4 +1,4 @@
-"""M5 data pipeline tests: .bin build, meta checks, sampler (fast)."""
+"""Data pipeline tests: building .bins, meta checks, sampler (fast)."""
 
 import json
 from pathlib import Path
@@ -25,7 +25,7 @@ def binned(tmp_path_factory):
     train_txt.write_text("\n".join(DOCS * 20) + "\n", encoding="utf-8")
     val_txt.write_text("\n".join(DOCS[:3] * 10) + "\n", encoding="utf-8")
     vocab = Path(__file__).resolve().parents[1] / "model" / "tests" / "fixtures" / "vocab.json"
-    # tmp fixture layout differs when run from model/ vs root; resolve robustly.
+    # Fixture path looks different from model/ vs from root, so handle both.
     if not vocab.exists():
         vocab = Path("model/tests/fixtures/vocab.json")
     out = tmp / "bins"
@@ -55,7 +55,7 @@ def test_meta_schema_and_eos_separation(binned):
         assert key in meta, f"missing meta key {key}"
     data = BinData(out / "train.bin", vocab)
     assert meta["eos_id"] == data.eos_id
-    # Every document is followed by EOS: count check on a tiny decode.
+    # Every doc should be followed by EOS, check the counts line up.
     assert data.n_tokens == meta["n_tokens"]
 
 
@@ -76,7 +76,7 @@ def test_sampler_shapes_and_dtypes(binned):
     x, y = sampler.sample(4)
     mx.eval(x, y)
     assert x.shape == (4, 32) and y.shape == (4, 32)
-    # y is x shifted by one (same underlying stream).
+    # y is just x shifted by one (same stream underneath).
     assert int(x[0, 1]) == int(y[0, 0])
 
 

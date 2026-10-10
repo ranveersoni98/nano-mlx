@@ -1,6 +1,6 @@
-"""M9 stretch: custom Metal fused RMSNorm vs built-ins.
+"""Our Metal fused RMSNorm vs the built-ins.
 
-Correctness across shapes/dtypes (incl. bf16 rounding bound) plus a
+Checks numbers across shapes/dtypes (bf16 rounding included) plus a
 full-model smoke run with norm_impl="metal".
 """
 
@@ -32,7 +32,7 @@ def test_metal_matches_manual_fp32(shape):
 
 
 def test_metal_bf16_rounding_bound():
-    """bf16 agrees to 1 ulp (0.03125 at these magnitudes) - rounding, not a bug."""
+    """bf16 matches to 1 ulp (0.03125 at these sizes). Just rounding."""
     mx.random.seed(0)
     xb = (mx.random.normal((256, 384)) * 3.0).astype(mx.bfloat16)
     wb = mx.random.normal((384,)) + 2.0

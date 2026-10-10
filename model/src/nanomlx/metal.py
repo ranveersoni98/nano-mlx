@@ -1,9 +1,9 @@
-"""Custom Metal kernels (M9 stretch): fused RMSNorm.
+"""Our own Metal kernels: fused RMSNorm for now.
 
-One thread per row; explicit float accumulation matches the manual path's
-fp32 semantics for fp32 AND bf16 inputs. The kernel is compiled lazily on
-first use (first call pays ~100ms Metal compile - always warm up and
-discard it in benchmarks).
+One thread per row. We accumulate in float on purpose so fp32 and bf16
+inputs match what the hand-written path does. The kernel compiles lazily
+on first use (first call costs ~100ms of Metal compile, so warm it up
+and throw that timing away in benchmarks).
 """
 
 from __future__ import annotations
@@ -53,12 +53,12 @@ def _kernel():
 
 
 def fused_rms_norm(x: mx.array, weight: mx.array, eps: float) -> mx.array:
-    """RMSNorm fused into one kernel. x: (..., D) (any batch shape, must be
-    contiguous rows of D); weight: (D,). Returns same shape/dtype as x.
+    """RMSNorm in one fused kernel. x is (..., D) (any batch shape, rows
+    of D have to be contiguous). weight is (D,). Same shape/dtype out as in.
 
-    The kernel is fp32-only (Metal has no implicit float->bfloat store):
-    non-fp32 inputs are upcast, normalized, and cast back - same numerics
-    as the manual path, which also computes in fp32.
+    The kernel only does fp32 (Metal won't silently store float as bfloat):
+    anything else gets upcast, normalized, and cast back. Same numbers as
+    the hand-written path, which also works in fp32.
     """
     if x.shape[-1] != weight.shape[0]:
         raise TypeError(f"rmsnorm dim mismatch: x {x.shape} vs weight {weight.shape}")

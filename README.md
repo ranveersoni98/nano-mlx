@@ -5,13 +5,13 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License: MIT" /></a>
 </p>
 
-A GPT built entirely from scratch, running only on Apple silicon. No CUDA, no cloud GPUs, no shortcuts: a byte-level BPE tokenizer written in Rust, a decoder-only transformer written in MLX, and benchmarks!
+A GPT built from scratch, only runs on Apple silicon. No CUDA, no cloud GPUs, no shortcuts. Just a byte-level BPE tokenizer in Rust, a decoder-only transformer in MLX, and benchmarks to keep us honest.
 
 ## What lives here
 
-1. **Tokenizer (Rust)** - byte-level BPE: 256 base bytes (no unknown tokens, any bytes round-trip), o200k-style regex pre-splitting, 32k default vocab, `<|endoftext|>` / `<|pad|>` special tokens. Performance work: per-chunk cache, linked-list plus binary-heap merge loop, `rayon` batch encoding, incremental pair counting in training.
-2. **Model (MLX)** - decoder-only transformer: RoPE, RMSNorm, SwiGLU, multi-head attention with optional GQA, weight tying, no biases. AdamW with warmup plus cosine decay, gradient clipping, `mx.compile`, hand-written KV cache, temperature / top-k / top-p sampling. Presets from debug (under 1M parameters) to base (about 125M).
-3. **Benchmarks** - our tokenizer against `tiktoken` and HuggingFace `tokenizers`, plus model throughput ablations (manual vs `mx.fast`, compile on/off, cache on/off, fp32 vs bf16).
+1. **Tokenizer (Rust)** - byte-level BPE. 256 base bytes so anything round-trips, o200k-style regex splitting, 32k vocab by default, `<|endoftext|>` / `<|pad|>` specials. Fast bits: per-chunk cache, linked-list plus heap merge loop, `rayon` batch encoding, incremental pair counting in training.
+2. **Model (MLX)** - decoder-only transformer with RoPE, RMSNorm, SwiGLU, multi-head attention plus optional GQA, tied weights, no biases. AdamW with warmup and cosine decay, grad clipping, `mx.compile`, KV cache we wrote by hand, temperature / top-k / top-p sampling. Sizes from debug (under 1M params) to base (around 125M).
+3. **Benchmarks** - our tokenizer vs `tiktoken` and HF `tokenizers`, plus model speed runs (hand-written vs `mx.fast`, compile on/off, cache on/off, fp32 vs bf16).
 
 ## Repo layout
 
@@ -46,18 +46,18 @@ uv run --project model python -m nanomlx.train --preset tiny --bin-dir data/tiny
 uv run --project model python -m nanomlx.generate --ckpt data/ckpts/proof --vocab data/tinystories/vocab-32k.json --prompt "Once upon a time" --max-new-tokens 120
 ```
 
-Two things worth knowing upfront:
-- `uv sync` resets the virtualenv, so re-run `maturin develop` after any sync.
-- Always benchmark `--release` Rust builds. Debug builds are 10 to 100 times slower and will mislead you.
+Two things to know first:
+- `uv sync` wipes the venv, so run `maturin develop` again after every sync.
+- Always bench `--release` Rust builds. Debug builds are 10 to 100x slower and the numbers will lie to you.
 
-Data flow: `download TinyStories -> encode_file_to_bin -> .bin (np.memmap) -> (x, y = x shifted) batches -> train -> generate`.
+Data flow is: `download TinyStories, encode to .bin files, load with memmap, train, generate`.
 
 ## Benchmarks
 
-<!-- GENERATED from benchmarks/results/*.json by benchmarks/tokenizer/make_readme_table.py - do not hand-edit. -->
-_Machine: Apple M5, 23.2GB RAM, Python 3.14.8, rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew). Release build. Median of repeats; warmup discarded._
+<!-- Made from benchmarks/results/*.json by benchmarks/tokenizer/make_readme_table.py, don't edit by hand. -->
+_Machine: Apple M5, 23.2GB RAM, Python 3.14.8, rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew). Release build. Median of repeats, warmup thrown away._
 
-Tokenizer encode (same inputs; different vocabs - ids not cross-compared):
+Tokenizer encode (same inputs, different vocabs, so ids aren't compared):
 
 | Workload | ours (Rust) | HF tokenizers | tiktoken o200k |
 |---|---|---|---|
@@ -67,16 +67,16 @@ Tokenizer encode (same inputs; different vocabs - ids not cross-compared):
 | multilingual | 62,504,411 tok/s | 13,587,341 tok/s | 3,785,801 tok/s |
 | full 1.9GB file (ours only) | 5,940,192 tok/s (25.87 MB/s) | - | - |
 
-Tokenizer training (same 20MB slice, vocab 5000; tiktoken ships no trainer):
+Tokenizer training (same 20MB slice, vocab 5000, tiktoken has no trainer):
 
 | Implementation | Wall time |
 |---|---|
-| ours (Rust incremental) | 2.5s (4742 merges) |
+| ours (Rust) | 2.5s (4742 merges) |
 | HF tokenizers | 1.7s |
 
-_Caveats: single-doc inputs use one thread in ours (file and batch paths parallelize); tiktoken wins large-file encode because its DFA regex stays linear where our backtracking one slows down._
+_Heads up: single-doc inputs only use one thread on our side (file and batch paths do parallelize). tiktoken wins big-file encode because its regex stays linear where our backtracking one slows down._
 
-Model throughput (tiny preset, 32k vocab, random init - throughput is weight-independent):
+Model speed (tiny preset, 32k vocab, random init, speed doesn't depend on weights):
 
 | Train step (batch 4, ctx 256) | tok/s | Peak mem |
 |---|---|---|
@@ -99,7 +99,7 @@ Model throughput (tiny preset, 32k vocab, random init - throughput is weight-ind
 | mx.fast + KV cache | 39,127 | 503 |
 | mx.fast, re-forward | 27,206 | 160 |
 
-(Model table generated from `benchmarks/results/2026-10-10_model.json` - same generator.)
+(Model table made from `benchmarks/results/2026-10-10_model.json` with the same script.)
 
 ## Samples
 
@@ -112,7 +112,7 @@ Model throughput (tiny preset, 32k vocab, random init - throughput is weight-ind
 `--prompt "One sunny morning" --temperature 0.9 --top-k 40 --top-p 0.9 --seed 21`:
 > One sunny morning, Lily would be scared because her mom gave her a special piece of people.
 
-They read like real stories after 300 steps. Train longer and they get better - the command is in **Train a model** below.
+They start reading like real stories after ~300 steps. Train longer and they get better. Command is under **Train a model** below.
 
 ## Train a model
 
@@ -122,16 +122,16 @@ uv run --project model python -m nanomlx.train --preset small --bin-dir data/tin
 uv run --project model python -m nanomlx.train --preset small --bin-dir data/tinystories/bins --ckpt-dir data/ckpts/small --vocab data/tinystories/vocab-32k.json --steps 20000 --batch 16 --seed 0 --resume data/ckpts/small/step_002000
 ```
 
-Presets: `debug` (sanity checks), `tiny` (about 10M parameters, quick experiments), `small` (about 30M, the real TinyStories run), `base` (about 125M, only if your RAM allows). Checkpoints keep the newest 3 plus best-val weights, always with the full config and the tokenizer hash.
+Presets: `debug` (sanity checks), `tiny` (around 10M params, quick tries), `small` (around 30M, the real TinyStories run), `base` (around 125M, only if you've got the RAM). Checkpoints keep the newest 3 plus the best-val weights, always with the full config and tokenizer hash.
 
 
 ## Known limitations
 
-- Single-doc `encode()` uses one thread (file/batch paths parallelize with rayon).
-- tiktoken beats us on large-file encode (DFA regex vs backtracking `fancy-regex`); we win cached/batch workloads.
-- `fancy-regex` 1M backtrack cap leads to 64K-char force-splits (covered by parity tests).
-- Few-ms prefill timings wobble on laptops; medians plus relative findings reported.
-- `meta.json`/`tokenizer_sha256` uses FNV-1a for now; switching to a real hash later.
+- Single-doc `encode()` uses one thread (file/batch paths use rayon).
+- tiktoken beats us on big-file encode (its DFA regex stays linear, ours backtracks). We win on cached/batch stuff.
+- `fancy-regex` has a 1M backtrack cap, so we chop at 64K chars (tests cover it).
+- Millisecond prefill timings wobble on laptops. We report medians plus the relative takeaways.
+- `meta.json` / `tokenizer_sha256` is FNV-1a for now. We'll swap in a real hash later.
 
 ## License
 

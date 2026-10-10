@@ -1,10 +1,11 @@
-"""Training loop (M5): AdamW + warmup/cosine, clip, grad-accum, eval,
-safetensors checkpoints with resume, jsonl (+best-effort TB) logging.
+"""Training loop: AdamW with warmup/cosine, clipping, grad accumulation,
+evals, safetensors checkpoints with resume, jsonl logging (plus TensorBoard
+if it's around).
 
-Conventions (§8): loss in float32, `mx.eval` every step (lazy graph never
-grows), tokens/step = batch * context * grad_accum, perplexity = exp(val).
-Optimizer state travels as flattened `|`-joined paths (`tok_emb` contains
-underscores, so `_` is not a safe separator).
+A few things we always do: loss in float32, `mx.eval` every step so the
+lazy graph doesn't grow, tokens/step = batch * context * grad_accum,
+perplexity = exp(val). Optimizer state is stored with `|`-joined flat
+paths (can't use `_` as the separator since `tok_emb` has underscores).
 """
 
 from __future__ import annotations
@@ -47,7 +48,7 @@ def dotted_key(flat: str) -> str:
 
 
 def ce_loss(model: GPT, x: mx.array, y: mx.array) -> mx.array:
-    """Next-token cross-entropy in float32; nothing masked (§8)."""
+    """Plain next-token cross-entropy in float32, nothing masked out."""
     logits = model(x).reshape(-1, model.cfg.vocab_size)
     logp = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
     return -mx.mean(logp[mx.arange(y.size), y.reshape(-1)])
@@ -115,7 +116,7 @@ def save_checkpoint(
 
 
 def _load_dict(path: str | Path) -> dict[str, mx.array]:
-    """mx.load for our checkpoints: must be a flat dict of arrays."""
+    """Load one of our checkpoints with mx.load. Has to be a flat dict of arrays."""
     data = mx.load(str(path))
     if not isinstance(data, dict):
         raise TypeError(f"{path} did not load as a dict (got {type(data).__name__})")
@@ -123,14 +124,14 @@ def _load_dict(path: str | Path) -> dict[str, mx.array]:
 
 
 def load_checkpoint(ckpt_step_dir: str | Path, model: GPT, opt, vocab_path: str | Path):
-    """Restore weights + optimizer + sampler state. Returns (step, sampler_state)."""
+    """Bring back weights, optimizer, and sampler state. Returns (step, sampler_state)."""
     dest, vocab_path = Path(ckpt_step_dir), Path(vocab_path)
     weights = _load_dict(dest / "weights.safetensors")
     model.update(unflatten_params({dotted_key(k): v for k, v in weights.items()}))
     raw = _load_dict(dest / "optim.npz")
-    # Assign (not .update()): MultiOptimizer.state is an aggregating property
-    # whose setter distributes to sub-optimizers; updating the aggregate dict
-    # would silently no-op.
+    # Assign, don't .update(): MultiOptimizer.state is a property that fans
+    # out to the sub-optimizers on set. Updating the dict in place would
+    # quietly do nothing.
     opt.state = unflatten_params({dotted_key(k): v for k, v in raw.items()})
     meta = json.loads((dest / "meta.json").read_text(encoding="utf-8"))
     vocab_hash = json.loads(vocab_path.read_text(encoding="utf-8"))["pattern_hash"]
@@ -151,7 +152,7 @@ def train(
     keep_last: int = 3,
     log_every: int = 10,
 ) -> dict:
-    """Run training; returns summary {steps, best_val_loss, last_loss}."""
+    """Run training. Returns a summary like {steps, best_val_loss, last_loss}."""
     seed_all(train_cfg.seed)
     bin_dir, ckpt_dir, vocab_path = Path(bin_dir), Path(ckpt_dir), Path(vocab_path)
     train_data = BinData(bin_dir / "train.bin", vocab_path)
@@ -170,9 +171,9 @@ def train(
         print(f"resumed from {resume} at step {start_step}")
 
     total = train_cfg.total_steps
-    # max_steps stops early WITHOUT reshaping the schedule: the LR horizon
-    # stays `total` so a resumed run continues the identical schedule
-    # (resume-equivalence tested).
+    # max_steps stops early but doesn't reshape the schedule: the LR horizon
+    # stays at `total` so picking up from a checkpoint keeps the exact same
+    # schedule (we test this).
     end = min(max_steps, total) if max_steps else total
     assert end > start_step, f"nothing to do: start {start_step} >= end {end}"
     mx.eval(model.parameters(), opt.state)
@@ -180,14 +181,14 @@ def train(
     loss_and_grad = nn.value_and_grad(model, ce_loss)
 
     def micro(x, y):
-        # Closed over (model, opt): the compiled trace must NOT take the
-        # module as an argument (it arrives as a param dict inside).
+        # Closed over (model, opt): the compiled trace can't take the module
+        # itself as an arg (it shows up as a param dict inside).
         return loss_and_grad(model, x, y)
 
     state = [model.state, opt.state]
     try:
         compiled = mx.compile(micro, inputs=state, outputs=state)
-        # The smoke batch must not advance the sampler: snapshot + restore.
+        # Smoke batch shouldn't move the sampler, so snapshot and restore it.
         snap = sampler.get_state()
         x0, y0 = sampler.sample(train_cfg.batch_size)
         l_ref, _ = micro(x0, y0)
@@ -196,8 +197,8 @@ def train(
         mx.eval(l_ref, l_cmp)
         assert abs(float(l_ref) - float(l_cmp)) < 1e-4, "compile diverged"
         step_fn = compiled
-    except Exception as e:  # noqa: BLE001 - compile can raise anything; eager is safe
-        print(f"compile unavailable, eager fallback ({type(e).__name__})")
+    except Exception as e:  # noqa: BLE001 - if compile blows up for any reason, eager is fine
+        print(f"compile unavailable, running eager instead ({type(e).__name__})")
         step_fn = micro
 
     def set_lr(step: int) -> float:
@@ -208,7 +209,7 @@ def train(
 
     tokens_per_step = train_cfg.batch_size * model_cfg.context * train_cfg.grad_accum
     last_ckpt = None
-    loss_val = math.nan  # always overwritten: end > start_step is asserted
+    loss_val = math.nan  # gets overwritten below since end > start_step is asserted
     step = start_step
     try:
         for step in range(start_step, end):
@@ -272,8 +273,8 @@ def train(
                         str(ckpt_dir / "best.safetensors"), flatten_params(dict(model.parameters()))
                     )
     except KeyboardInterrupt:
-        # Safe stop: persist a resume checkpoint for the completed steps.
-        # The in-flight step's batch is skipped on resume (documented, negligible).
+        # Ctrl-C: save what we've got so we can resume from here.
+        # The batch in flight gets skipped on resume (tiny, we live with it).
         print(f"\ninterrupted at step {step}; saving resume checkpoint...")
         save_checkpoint(
             ckpt_dir,

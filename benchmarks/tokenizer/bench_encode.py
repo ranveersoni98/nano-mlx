@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""Tokenizer encode showdown: ours (Rust) vs HF `tokenizers` vs `tiktoken`.
+"""How fast is our Rust tokenizer vs HF `tokenizers` vs `tiktoken`.
 
-Fairness (§11.1): same inputs throughout. Vocabs necessarily differ (ours
-and HF are both 32k BPE trained on TinyStories - different merges; tiktoken
-uses published o200k_base), so ids are NOT compared across implementations;
-each implementation's own round-trip is verified and results are reported
-separately with the caveat stated. Release-built extension required.
+Same inputs for everyone. Vocabs have to differ (ours and HF are both
+32k BPE trained on TinyStories but learned different merges, tiktoken
+uses its published o200k_base), so we don't compare ids across them.
+We just check each one round-trips its own stuff and report speeds
+separately. Needs the release-built extension.
 
-Workloads: (a) 100MB large-file (+ full 1.9GB ours-only), (b) short-string
-latency p50/p99, (c) code-heavy, (d) multilingual.
-Method: warmup discarded, ≥3 timed repeats, median reported, wall +
-tokens/sec + MB/sec + RSS-after. JSON -> benchmarks/results/.
+We run: (a) 100MB big file (plus the full 1.9GB file for ours only),
+(b) short-string latency p50/p99, (c) code-heavy, (d) multilingual.
+Warmup runs get thrown away, we do at least 3 timed repeats and take
+the median. Saves wall time, tokens/sec, MB/sec, and RSS. JSON goes
+in benchmarks/results/.
 
 Usage:
     uv run --project benchmarks python benchmarks/tokenizer/bench_encode.py [--quick]
@@ -45,7 +46,7 @@ def rss_mb() -> float:
 
 
 def train_hf_if_needed(slice_path: Path):
-    """HF 32k BPE on the same training slice. Cached to data/."""
+    """Train HF's 32k BPE on the same slice. Cached in data/ so we only do it once."""
     from tokenizers import Tokenizer as HFTok
     from tokenizers.decoders import ByteLevel as ByteLevelDec
     from tokenizers.models import BPE
@@ -62,8 +63,8 @@ def train_hf_if_needed(slice_path: Path):
         vocab_size=HF_VOCAB_SIZE,
         special_tokens=["<|endoftext|>", "<|pad|>"],
         show_progress=False,
-        # Full 256-byte coverage: without this, bytes unseen in the slice
-        # (e.g. emoji) are OOV and silently dropped on encode.
+        # Cover all 256 bytes up front. Without this, bytes the slice never
+        # saw (like emoji) go OOV and get silently dropped on encode.
         initial_alphabet=ByteLevel.alphabet(),
     )
     t0 = time.perf_counter()
@@ -90,7 +91,7 @@ def encode_all(name: str, impl, texts: list[str]):
 
 def bench_workload(name, impl, texts, repeats, out: dict, notes: str = ""):
     n_bytes = sum(len(t.encode("utf-8")) for t in texts)
-    encode_all(name, impl, texts[:10])  # warmup, discarded
+    encode_all(name, impl, texts[:10])  # warmup, throw it away
     walls, counts = [], []
     for _ in range(repeats):
         t0 = time.perf_counter()
@@ -107,9 +108,9 @@ def bench_workload(name, impl, texts, repeats, out: dict, notes: str = ""):
         "mb_per_s": round(n_bytes / wall / 1e6, 2),
         "rss_after_mb": round(rss_mb(), 1),
     }
-    # Correctness: same ids across repeats (determinism) + round-trip on
-    # probes and on the workload sample itself. (An earlier revision caught
-    # HF dropping bytes unseen in training - fixed via initial_alphabet.)
+    # Sanity checks: same ids every time (deterministic) plus round-trip on
+    # probes and on a bit of the real workload. (An older version caught HF
+    # dropping bytes it never saw in training, fixed with initial_alphabet.)
     again = encode_all(name, impl, texts[:5])
     first = encode_all(name, impl, texts[:5])
     assert [list(x) for x in again] == [list(x) for x in first], f"{name} nondeterministic"
@@ -142,7 +143,7 @@ def main() -> None:
     assert OUR_VOCAB.exists(), f"train it first (see M3): {OUR_VOCAB}"
     assert TRAIN_TXT.exists(), f"missing {TRAIN_TXT}"
 
-    # 20MB slice for HF training (same data ours saw, subset for speed).
+    # 20MB slice so HF has something to train on (same data ours saw, just smaller).
     train_slice = ROOT / "data" / "tinystories" / "train_slice_20m.txt"
     if not train_slice.exists():
         with open(TRAIN_TXT, "rb") as f:
@@ -171,10 +172,10 @@ def main() -> None:
         "vocabs": {
             "ours-rust": "32k BPE trained on full TinyStories train (this repo)",
             "hf-tokenizers": "32k BPE trained on 20MB TinyStories slice",
-            "tiktoken-o200k": "published o200k_base (151k, own merges)",
+            "tiktoken-o200k": "published o200k_base (151k, its own merges)",
         },
-        "caveat": "Same inputs; different vocabs => ids not cross-compared. "
-        "Round-trip verified per implementation.",
+        "caveat": "Same inputs, different vocabs, so ids aren't compared across. "
+        "Round-trip checked per implementation.",
         "workloads": {},
     }
     wl = results["workloads"]

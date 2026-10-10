@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Model throughput (M7): train tok/s, infer prefill/decode tok/s, peak mem.
+"""Model speed: train tok/s, prefill/decode tok/s, peak memory.
 
-Ablations, each isolated: manual vs mx.fast, compile on/off, cache vs no
-cache, fp32 vs bf16, batch sweep. Warmup excluded, mx.eval inside the timed
-region, median of repeats. Random-init tiny preset (throughput is
-weight-independent). JSON -> benchmarks/results/.
+We change one thing at a time: hand-written vs mx.fast, compile on/off,
+cache vs no cache, fp32 vs bf16, batch size sweep. Warmup doesn't count,
+mx.eval sits inside the timed bit, we take the median. Tiny preset with
+random weights (speed doesn't care about the actual weights). JSON goes
+in benchmarks/results/.
 
-Usage (needs mlx: run with the MODEL env):
+Needs mlx, so run it with the MODEL env:
     uv run --project model python benchmarks/model/bench_model.py [--quick]
 """
 
@@ -78,7 +79,7 @@ def bench_train_step(fast: bool, dtype, batch: int, compiled: bool, repeats: int
         if compiled
         else micro
     )
-    # Warmup (traces compile; discarded).
+    # Warmup (traces compile, doesn't count).
     for _ in range(3):
         l, g = fn(x, y)
         opt.update(m, g)
@@ -117,7 +118,7 @@ def bench_infer(fast: bool, dtype, cached: bool, n_new: int = 64, repeats: int =
         mx.eval(logits)
         return int(mx.argmax(logits[0, -1]))
 
-    # Warmup (kernel tracing/compilation; discarded).
+    # Warmup (kernel tracing/compile, doesn't count).
     if cached:
         wc = KVCache(cfg, batch_size=1)
         prefill(prompt, wc.layers)
@@ -174,9 +175,9 @@ def main() -> None:
     args = ap.parse_args()
     repeats = 2 if args.quick else 3
 
-    # Warmup soak: stabilize GPU clocks/thermals before measuring (laptops
-    # otherwise drift ±2x across configs; order effects dominate otherwise).
-    print("== warmup soak (10s matmuls, discarded) ==")
+    # Warmup soak: let the GPU clocks/thermals settle before timing (laptops
+    # swing ~2x across configs otherwise, and run order swamps everything).
+    print("== warmup soak (10s matmuls, doesn't count) ==")
     soak_end = time.perf_counter() + 10
     while time.perf_counter() < soak_end:
         a = mx.random.normal((512, 512))
@@ -218,7 +219,7 @@ def main() -> None:
                 f"{key}: prefill {r['prefill_tok_s']:,} tok/s  decode {r['decode_tok_s']:,} tok/s"
             )
 
-    results["machine_note"] = "throughput is weight-independent; random init used"
+    results["machine_note"] = "speed doesn't depend on weights, so random init is fine"
     from datetime import date
 
     path = write_result(f"{date.today().isoformat()}_model", results)

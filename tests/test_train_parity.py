@@ -1,9 +1,9 @@
-"""M3 acceptance: Rust training output identical to the Python reference.
+"""Rust training output should match the Python version exactly.
 
-Trains both on a deterministic ≥1MB mixed corpus (incl. CRLF - the
-universal-newline mistranslation class) and asserts zero differences in
-the merge list. Slow by design (the reference recounts pairs per merge);
-run explicitly for milestone sign-off.
+We train both on a fixed 1MB-plus mixed corpus (with CRLF in it, since
+newline translation bit us once) and check the merge lists are identical.
+Slow on purpose (the Python side recounts pairs every merge). Run it
+directly when you want the full check.
 """
 
 import random
@@ -24,10 +24,9 @@ SEED = 20261010
 
 
 def make_corpus_mb1(tmp_path: Path) -> Path:
-    """Deterministic mixed corpus, ≥1MB, written with raw newlines.
+    """Make a fixed mixed corpus, 1MB-plus, with raw newlines kept.
 
-    Written in binary mode so \\r\\n survives exactly (training inputs are
-    byte-exact on both sides).
+    Written in binary so \\r\\n stays as-is (both sides train byte-exact).
     """
     rng = random.Random(SEED)
     words = [
@@ -121,11 +120,11 @@ def test_training_parity_1mb(tmp_path):
     )
     assert rust.special_tokens() == ref.special_tokens
     assert len(ref.merges) > 0
-    print(f"\n1MB training parity: {len(ref.merges)} merges, zero diffs")
+    print(f"\n1MB training check: {len(ref.merges)} merges, no diffs")
 
 
 def test_training_parity_small(tmp_path):
-    """Fast training parity on the fixture corpus (runs by default)."""
+    """Quicker training check on the fixture corpus (runs by default)."""
     corpus = ROOT / "model" / "tests" / "fixtures" / "tiny_corpus.txt"
     ref = RefTokenizer.train([corpus], vocab_size=VOCAB_SIZE)
     rust = nanomlx_tokenizer.Tokenizer.train([str(corpus)], VOCAB_SIZE, None)

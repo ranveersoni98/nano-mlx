@@ -1,29 +1,29 @@
 # nanomlx-benchmarks
 
-Honest harnesses, machine specs attached to every run. See the [root README](../README.md) for the tables these produce.
+Benchmark scripts that save the machine info with every run. Root README has the tables these make.
 
 ## Layout
 
 ```
 tokenizer/
-  compare_hf.py        # first-look correctness sketch (ours vs HF)
-  bench_encode.py      # large-file / latency / code / multilingual showdown
-  bench_train.py       # training wall-time: ours vs HF (tiktoken ships no trainer)
-  make_readme_table.py # renders README tables from results/*.json (never hand-type!)
+  compare_hf.py        # early sanity check (ours vs HF)
+  bench_encode.py      # big-file / latency / code / multilingual timings
+  bench_train.py       # training time: ours vs HF (tiktoken has no trainer)
+  make_readme_table.py # builds README tables from results/*.json (don't type them by hand)
 model/
-  bench_model.py       # train tok/s, prefill/decode, ablations (needs mlx: run via model env)
-  bench_metal.py       # custom Metal RMSNorm vs built-ins
+  bench_model.py       # train tok/s, prefill/decode, speed comparisons (needs mlx, run with model env)
+  bench_metal.py       # our Metal RMSNorm vs built-ins
   plot_loss.py         # loss curves from metrics.jsonl
-results/               # committed JSON, one file per run (machine specs inside)
-charts/                # generated PNGs (loss curves etc.)
+results/               # checked-in JSON, one file per run (machine info inside)
+charts/                # made PNGs (loss curves etc.)
 ```
 
-## Rules we hold to
+## How we bench
 
-- Same inputs everywhere; warmups discarded; median of repeats; `mx.eval` inside timed regions.
-- Release Rust builds only. Note power mode + battery in every run.
-- If implementations can't share a vocab, say so and report separately.
-- Tables are generated from JSON, never hand-typed. Charts from scripts, never edited.
+- Same inputs everywhere. Warmup doesn't count, median of repeats, `mx.eval` inside the timed bit.
+- Release Rust builds only. We note power mode and battery every run.
+- If two setups can't share a vocab, we say so and report them separately.
+- Tables come from JSON via script, never typed by hand. Charts come from scripts, never edited.
 
 ## Commands (run from repo root)
 

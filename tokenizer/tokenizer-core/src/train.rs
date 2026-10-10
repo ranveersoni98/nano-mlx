@@ -1,26 +1,26 @@
-//! BPE training (M3): incremental pair counts over words.
+//! BPE training: incremental pair counts over words.
 //!
-//! Algorithm (§5.7): count word (pre-tokenized chunk) frequencies once -
-//! with rayon - then learn merges without ever recounting the corpus:
+//! How it works: count word (pre-tokenized chunk) frequencies once, with
+//! rayon, then learn merges without ever recounting the corpus:
 //!
-//! - each distinct word is a token-id sequence with a frequency weight;
-//! - `counts`: pair -> total occurrences (frequency-weighted);
-//! - `index`: pair -> word indices containing it (append-only; stale refs
-//!   are skipped by re-checking the word, never removed);
-//! - `heap`: max-heap of `(count, smallest-pair)` with lazy invalidation
-//!   (a popped entry is used only if it still equals the live count).
+//! - each distinct word is a token-id sequence with a frequency weight,
+//! - `counts`: pair to total hits (weighted by frequency),
+//! - `index`: pair to word spots holding it (append-only, stale refs get
+//!   skipped by re-checking the word, never removed),
+//! - `heap`: max-heap of `(count, smallest-pair)` with lazy throwing away
+//!   (a popped entry only counts if it still matches the live count).
 //!
-//! After each merge only words containing the merged pair are rewritten
-//! (all non-overlapping occurrences, left to right - exactly like the
-//! reference), adjusting counts of destroyed/created neighbor pairs by the
-//! word's frequency. Frozen tie-breaks (§5.4): highest count, then smallest
-//! `(left, right)`; new id = next unused; stop at the target vocab size
-//! (minus specials) or when no pair reaches count 2.
+//! After each merge we only rewrite words holding that pair (every
+//! non-overlapping hit, left to right, same as the Python side), fixing up
+//! counts of killed/created neighbor pairs by the word's frequency.
+//! Tie-breaks: highest count, then smallest `(left, right)`. New id is the
+//! next free one. Stop at target vocab size (minus specials) or when no
+//! pair hits count 2.
 //!
-//! Determinism: counts are exact sums (addition order irrelevant), the heap
-//! fully determines merge order, and rayon is only used for the
-//! order-free frequency reduction - so output is identical run to run and
-//! identical to `reference_bpe.train` (proven by the ≥1MB parity test).
+//! Deterministic: counts are exact sums (add order doesn't matter), the heap
+//! fixes merge order, and rayon only does the order-free frequency adding,
+//! so output is the same every run and matches `reference_bpe.train`
+//! (checked by the 1MB-plus training test).
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -31,13 +31,13 @@ use crate::error::{Error, Result};
 use crate::pretokenize::{pretokenize, split_long_segment};
 use crate::vocab::{FastMap, Tokenizer};
 
-/// One distinct word: its frequency and current tokenization.
+/// One distinct word: how often it shows up and its current tokenization.
 struct Word {
     freq: u64,
     tokens: Vec<u32>,
 }
 
-/// Count pair occurrences in `tokens` (multiset: pair -> multiplicity).
+/// How many times each pair shows up in `tokens` (pair to hits).
 fn pair_multiset(tokens: &[u32]) -> FastMap<(u32, u32), u64> {
     let mut map: FastMap<(u32, u32), u64> = FastMap::default();
     for w in tokens.windows(2) {
@@ -46,13 +46,13 @@ fn pair_multiset(tokens: &[u32]) -> FastMap<(u32, u32), u64> {
     map
 }
 
-/// Rewrite `tokens` merging every non-overlapping occurrence of `pair`
-/// into `new_id`. Returns true if anything changed.
+/// Rewrite `tokens` merging every non-overlapping hit of `pair`
+/// into `new_id`. True if anything changed.
 fn apply_merge(tokens: &mut Vec<u32>, pair: (u32, u32), new_id: u32) -> bool {
     if tokens.len() < 2 {
         return false;
     }
-    // Fast prefilter: skip words that cannot contain the pair.
+    // Quick skip: don't bother with words that can't hold the pair.
     let mut maybe = false;
     for w in tokens.windows(2) {
         if (w[0], w[1]) == pair {
@@ -78,9 +78,9 @@ fn apply_merge(tokens: &mut Vec<u32>, pair: (u32, u32), new_id: u32) -> bool {
     true
 }
 
-/// Train a vocabulary on `texts` (each a document string).
+/// Train a vocab on `texts` (each one document string).
 ///
-/// Training inputs must be valid UTF-8 (TinyStories-class corpora are).
+/// Inputs have to be valid UTF-8 (TinyStories-style corpora are).
 /// Returns a [`Tokenizer`] with `merges` in learned order.
 pub fn train(
     texts: &[String],
@@ -92,8 +92,8 @@ pub fn train(
         .saturating_sub(special_tokens.len());
 
     // 1. Word frequencies, counted once, in parallel. Words are
-    // pre-tokenized chunks (force-split rule included), exactly like the
-    // reference: every byte belongs to exactly one word.
+    // pre-tokenized chunks (chopping rule included), same as the Python
+    // side: every byte lands in exactly one word.
     let per_text: Result<Vec<FastMap<String, u64>>> = texts
         .par_iter()
         .map(|text| {
@@ -133,8 +133,8 @@ pub fn train(
             index.entry(pair).or_default().push(idx);
         }
     }
-    // Max-heap: highest count first, ties broken by smallest pair
-    // (frozen §5.4). `Reverse(pair)` in a max-heap pops the smallest pair.
+    // Max-heap: biggest count first, ties go to the smallest pair.
+    // `Reverse(pair)` in a max-heap pops the smallest pair.
     let mut heap: BinaryHeap<(u64, Reverse<(u32, u32)>)> = BinaryHeap::new();
     for (&pair, &count) in counts.iter() {
         heap.push((count, Reverse(pair)));
@@ -143,7 +143,7 @@ pub fn train(
     // 4. Merge loop with incremental updates.
     let mut merges: Vec<(u32, u32)> = Vec::new();
     while merges.len() < target_merges {
-        // Find the live best pair (skip stale heap entries).
+        // Find the live best pair (skip heap entries that went stale).
         let best = loop {
             match heap.pop() {
                 Some((count, Reverse(pair))) => {
@@ -169,11 +169,11 @@ pub fn train(
                 continue; // stale index ref
             }
             let new = pair_multiset(&word.tokens);
-            // Decrement destroyed pairs, increment created ones. Every pair
-            // whose count changes - up OR down - gets a fresh heap entry.
-            // (Down matters: a pair can decrease *into* first place, and
-            // without a fresh entry it would sit invisible while lower
-            // pairs merge. Stale entries die on pop.)
+            // Count down killed pairs, count up new ones. Every pair whose
+            // count moves, up OR down, gets a fresh heap entry. (Down
+            // matters: a pair can drop *into* first place, and without a
+            // fresh entry it would sit there invisible while lower pairs
+            // merge. Stale entries die when popped.)
             for (p, c) in &old {
                 let delta = c * word.freq;
                 match counts.get_mut(p) {
@@ -223,8 +223,8 @@ mod tests {
     #[test]
     fn tie_break_picks_smallest_pair() {
         // "ab" and "ba" tie at 2 each: (97,98) < (98,97), so (97,98) wins.
-        // Chunks are single words here (no spaces inside pieces... spaces
-        // split words, so craft one word with a tie).
+        // Chunks are single words here (no spaces inside bits, spaces
+        // split words, so make one word with a tie).
         let texts = vec!["abba".to_owned()];
         let tok = train(&texts, 260, vec![]).expect("train");
         // Pairs in "abba": (a,b)x1, (b,b)x1, (b,a)x1 - no count>=2, no merges.

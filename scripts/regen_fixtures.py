@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Regenerate golden fixtures for tokenizer parity tests.
+"""Rebuild the saved fixtures for the tokenizer tests.
 
-Reads:  model/tests/fixtures/tiny_corpus.txt (committed, fixed)
+Reads:  model/tests/fixtures/tiny_corpus.txt (checked in, don't change it)
 Writes: model/tests/fixtures/vocab.json + expected_ids.json
 
-Review the diff before committing - fixture changes mean the tokenizer
-changed behavior.
+Look at the diff before you commit. If fixtures changed, the tokenizer
+is behaving differently.
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ PROBES = [
 def main() -> None:
     corpus = FIX / "tiny_corpus.txt"
     if not corpus.exists():
-        raise SystemExit(f"missing {corpus} - it must be committed, not generated")
+        raise SystemExit(f"missing {corpus}, it should be checked in, not made")
     tok = Tokenizer.train([corpus], vocab_size=VOCAB_SIZE)
     tok.save(FIX / "vocab.json")
     expected = {text: tok.encode(text) for text in PROBES}

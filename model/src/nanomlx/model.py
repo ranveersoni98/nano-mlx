@@ -1,16 +1,18 @@
-"""Decoder-only transformer in MLX (M4): manual attention, kept permanently.
+"""Our decoder-only transformer in MLX. Hand-written attention, and we're
+keeping it.
 
-Architecture: token embedding -> N x pre-norm block ->
-final RMSNorm -> LM head. Attention is multi-head with optional GQA, RoPE on
-Q/K, causal masking, no absolute positions. MLP is SwiGLU. No biases by
-default. Weight tying is a config flag (default on for small presets).
+It's pretty standard: token embeddings, a stack of pre-norm blocks,
+one final RMSNorm, then the output head. Multi-head attention with
+optional GQA, RoPE on Q/K, causal mask, no absolute positions. SwiGLU
+MLP. No biases by default. You can tie the embeddings to the head
+(on by default for the small presets).
 
-Precision: compute dtype follows the parameters (usually bfloat16); norms,
-softmax inputs, and the loss stay float32 with explicit casts (M4 tests run
-float32 throughout for determinism).
+On dtypes: we compute in whatever the params are (usually bfloat16).
+Norms, softmax inputs, and the loss stay in float32 with explicit
+casts. Tests just run everything in float32 so they're deterministic.
 
-The `mx.fast` variants land in M7 behind `attention_impl="fast"`; this
-manual path stays as the numerical reference.
+The `mx.fast` versions live behind `attention_impl="fast"`. This
+hand-written path sticks around as the reference we check against.
 """
 
 from __future__ import annotations
@@ -24,9 +26,9 @@ from nanomlx.config import ModelConfig
 
 
 class RMSNorm(nn.Module):
-    """RMSNorm without bias. Manual path computes in float32 explicitly;
-    `fast` delegates to `mx.fast.rms_norm`, `metal` to the M9 fused kernel
-    (all equivalence-tested)."""
+    """RMSNorm, no bias. "manual" does it in float32 by hand,
+    "fast" calls `mx.fast.rms_norm`, "metal" calls our fused kernel.
+    We check all three against each other."""
 
     def __init__(self, dims: int, eps: float = 1e-5, impl: str = "manual"):
         super().__init__()
@@ -52,8 +54,8 @@ class RMSNorm(nn.Module):
 def build_rope_cache(
     seq_len: int, head_dim: int, theta: float = 10000.0, offset: int = 0
 ) -> tuple[mx.array, mx.array]:
-    """(cos, sin) tables of shape (seq_len, head_dim // 2) for positions
-    [offset, offset + seq_len). head_dim must be even."""
+    """Build (cos, sin) tables shaped (seq_len, head_dim // 2) for
+    positions [offset, offset + seq_len). head_dim has to be even."""
     assert head_dim % 2 == 0, f"RoPE needs even head_dim, got {head_dim}"
     half = head_dim // 2
     freqs = 1.0 / (theta ** (mx.arange(half, dtype=mx.float32) / half))
@@ -64,8 +66,8 @@ def build_rope_cache(
 
 
 def apply_rope(x: mx.array, cos: mx.array, sin: mx.array) -> mx.array:
-    """Rotate (..., T, head_dim). cos/sin: (T, head_dim // 2), broadcast
-    over batch and heads."""
+    """Rotate (..., T, head_dim). cos/sin are (T, head_dim // 2) and
+    broadcast over batch and heads."""
     x1 = x[..., 0::2]
     x2 = x[..., 1::2]
     # (1, 1, T, half) so batch/head dims broadcast.
@@ -80,13 +82,14 @@ def apply_rope(x: mx.array, cos: mx.array, sin: mx.array) -> mx.array:
 
 
 class KVCache:
-    """Hand-written per-layer K/V store (M6).
+    """Per-layer K/V store we manage by hand.
 
-    Post-RoPE K and V, shape per layer (B, n_kv_heads, max_len, head_dim) -
-    GQA-aware (stores kv heads, expands at attention time). Preallocated to
-    `max_len` and written in place via slice updates (no per-step concat).
-    `seq_len` tracks filled positions; positions are absolute (cache always
-    starts at 0, so RoPE offset == row index).
+    Holds post-RoPE K and V per layer, shaped
+    (B, n_kv_heads, max_len, head_dim). GQA-aware, so we store kv heads
+    and expand at attention time. Preallocated to `max_len` and written
+    in place with slice updates, no concat per step. `seq_len` is how
+    many spots are filled. Positions are absolute (cache always starts
+    at 0, so the RoPE offset is just the row index).
     """
 
     def __init__(self, cfg: ModelConfig, batch_size: int = 1, max_len: int | None = None):
@@ -104,7 +107,7 @@ class KVCache:
 
 
 class CausalSelfAttention(nn.Module):
-    """Manual scaled dot-product attention with GQA + RoPE (M4 path)."""
+    """Hand-written scaled dot-product attention with GQA + RoPE."""
 
     def __init__(self, cfg: ModelConfig):
         super().__init__()
@@ -124,16 +127,17 @@ class CausalSelfAttention(nn.Module):
         q = self.q_proj(x).reshape(B, T, h, hd).transpose(0, 2, 1, 3)
         k = self.k_proj(x).reshape(B, T, kv, hd).transpose(0, 2, 1, 3)
         v = self.v_proj(x).reshape(B, T, kv, hd).transpose(0, 2, 1, 3)
-        # RoPE at absolute positions (offset>0 is the KV-cache decode path).
+        # RoPE at absolute positions. offset > 0 means we're decoding
+        # with a KV cache.
         if cfg.rope_impl == "fast":
-            # traditional=True matches our interleaved-pairs layout (probed).
+            # traditional=True lines up with how we interleave pairs (we checked).
             q = mx.fast.rope(q, hd, traditional=True, base=cfg.rope_theta, scale=1.0, offset=offset)
             k = mx.fast.rope(k, hd, traditional=True, base=cfg.rope_theta, scale=1.0, offset=offset)
         else:
             cos, sin = build_rope_cache(T, hd, cfg.rope_theta, offset)
             q, k = apply_rope(q, cos, sin), apply_rope(k, cos, sin)
         if cache is not None:
-            # In-place slice update; attend over the filled prefix.
+            # Write into the cache in place, then attend over what's filled so far.
             cache["k"][:, :, offset : offset + T, :] = k
             cache["v"][:, :, offset : offset + T, :] = v
             S = offset + T
@@ -147,10 +151,10 @@ class CausalSelfAttention(nn.Module):
             mx.arange(S)[None, :] if cache is not None else mx.arange(offset, offset + T)[None, :]
         )
         if cfg.attention_impl == "fast":
-            # Native GQA (no head repeat). Square no-offset prefill takes the
-            # fused causal kernel; every other shape (cached decode, offset
-            # forwards) uses an explicit boolean keep-mask (True = attend).
-            # Both are equivalence-tested against the manual path.
+            # Native GQA, no head repeating. Square no-offset prefill gets
+            # the fused causal kernel. Everything else (cached decode,
+            # offset forwards) uses an explicit keep-mask (True means attend).
+            # We check both against the hand-written path.
             if cache is None and offset == 0:
                 attn_out = mx.fast.scaled_dot_product_attention(q, k, v, scale=scale, mask="causal")
             else:
@@ -158,7 +162,7 @@ class CausalSelfAttention(nn.Module):
                 attn_out = mx.fast.scaled_dot_product_attention(q, k, v, scale=scale, mask=keep)
             out = attn_out.transpose(0, 2, 1, 3).reshape(B, T, h * hd)
         else:
-            # GQA: repeat KV heads to match Q heads.
+            # GQA: repeat KV heads up to match Q heads.
             if self.n_rep > 1:
                 k = mx.repeat(k, self.n_rep, axis=1)
                 v = mx.repeat(v, self.n_rep, axis=1)
@@ -171,7 +175,7 @@ class CausalSelfAttention(nn.Module):
 
 
 class SwiGLU(nn.Module):
-    """down(silu(gate(x)) * up(x)). gate/up: d->f, down: f->d."""
+    """down(silu(gate(x)) * up(x)). gate and up go d -> f, down goes f -> d."""
 
     def __init__(self, cfg: ModelConfig):
         super().__init__()
@@ -186,7 +190,7 @@ class SwiGLU(nn.Module):
 
 
 class Block(nn.Module):
-    """Pre-norm residual block: x += Attn(Norm(x)); x += MLP(Norm(x))."""
+    """Pre-norm residual block: x += Attn(Norm(x)), then x += MLP(Norm(x))."""
 
     def __init__(self, cfg: ModelConfig):
         super().__init__()
@@ -202,7 +206,7 @@ class Block(nn.Module):
 
 
 class GPT(nn.Module):
-    """The model. `forward(idx)` -> float32 logits (B, T, vocab_size)."""
+    """The model. `forward(idx)` gives you float32 logits shaped (B, T, vocab)."""
 
     def __init__(self, cfg: ModelConfig):
         super().__init__()
@@ -216,9 +220,10 @@ class GPT(nn.Module):
         self._init_weights(cfg)
 
     def _init_weights(self, cfg: ModelConfig) -> None:
-        # Embeddings + all linears: N(0, 0.02); residual-output projections
-        # (attn o_proj, MLP down) scaled by 1/sqrt(2*n_layers) (GPT-2 style).
-        import mlx.core as _mx  # local: keeps module top-level tidy
+        # Embeddings + all linears start at N(0, 0.02). The residual-output
+        # projections (attn o_proj, MLP down) get scaled by 1/sqrt(2*n_layers),
+        # GPT-2 style.
+        import mlx.core as _mx  # local import so the top of the file stays clean
 
         res_scale = 1.0 / math.sqrt(2 * cfg.n_layers)
         self.tok_emb.weight = (
@@ -244,11 +249,11 @@ class GPT(nn.Module):
             )
 
     def forward(self, idx: mx.array, offset: int = 0, caches: list[dict] | None = None) -> mx.array:
-        """idx: (B, T) int tokens -> (B, T, V) float32 logits.
+        """idx is (B, T) int tokens, returns (B, T, V) float32 logits.
 
-        `caches`: one per-layer dict from a [`KVCache`], or None for a full
-        forward. With caches, only `idx`'s tokens are processed (prefill the
-        prompt once, then decode one token at a time at offset=cached len).
+        Pass one cache dict per layer (from a `KVCache`) or None for a plain
+        full forward. With caches we only process the tokens in `idx`
+        (prefill the prompt once, then decode one token at a time).
         """
         x = self.tok_emb(idx)
         for i, blk in enumerate(self.blocks):
@@ -267,7 +272,7 @@ class GPT(nn.Module):
         return self.forward(idx, offset=offset, caches=caches)
 
     def count_params(self) -> tuple[int, int]:
-        """(total, without embeddings). Tests assert == config formula."""
+        """Returns (total, without embeddings). Tests check this against the config."""
         total = sum(int(v.size) for _, v in tree_flatten(dict(self.parameters())))
         emb = int(self.tok_emb.weight.size)
         head = 0 if self.lm_head is None else int(self.lm_head.weight.size)
@@ -275,7 +280,7 @@ class GPT(nn.Module):
 
 
 def tree_flatten(tree, _path=()):
-    """Yield (dotted.path, array) leaves of an MLX param tree."""
+    """Walk an MLX param tree, yields (dotted.path, array) leaves."""
     if isinstance(tree, dict):
         for k, v in tree.items():
             yield from tree_flatten(v, _path + (str(k),))

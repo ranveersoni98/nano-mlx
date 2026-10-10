@@ -1,4 +1,4 @@
-"""Generation tests (M5, no-cache): sampling filters + determinism."""
+"""Generation tests (no cache path): sampling filters plus determinism."""
 
 import mlx.core as mx
 import numpy as np
@@ -35,8 +35,8 @@ def test_topp10_pure_temperature():
 
 
 def test_topp_one_equals_pure_temperature():
-    """top-p=1.0 with top-k disabled == pure temperature sampling (§9/M6):
-    checked against an independent inline implementation."""
+    """top-p=1.0 with top-k off is just plain temperature sampling.
+    We check against a small inline version."""
     logits = np.random.default_rng(4).normal(size=VOCAB)
     temp = 0.8
     l = logits / temp
@@ -69,7 +69,7 @@ def test_generate_stops_and_reproducible():
 def test_generate_eos_stop():
     model = _model()
     enc, dec = _codec()
-    # eos_id = first generated id under greedy: run once, then demand stop.
+    # eos_id is the first greedy id: run once, then check we stop right away.
     first = generate(model, enc, dec, "hi", max_new_tokens=1, temperature=0.0, seed=0)
     stopped = generate(
         model, enc, dec, "hi", max_new_tokens=50, temperature=0.0, eos_id=first[0], seed=0
@@ -78,8 +78,8 @@ def test_generate_eos_stop():
 
 
 def test_streamer_prints_deltas_only(capsys):
-    """_Streamer emits each character once; a transient trailing U+FFFD
-    (token split mid-UTF-8) is held back until it resolves."""
+    """_Streamer prints each char once. A dangling U+FFFD (we split a UTF-8
+    char mid-token) waits until it resolves."""
     from nanomlx.generate import _Streamer
 
     script = {1: "ab", 2: "ab�", 3: "ab🎉c", 4: "ab🎉cd"}

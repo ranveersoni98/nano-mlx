@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Training wall-time: ours (Rust, incremental) vs HF `tokenizers` BPE.
+"""How long does training take: ours (Rust) vs HF `tokenizers` BPE.
 
-Same 20MB TinyStories slice, same target vocab (5000 - keeps HF time
-sane). tiktoken has no trainer (stated, not benchmarked). JSON committed.
+Same 20MB TinyStories slice, same target vocab (5000 keeps HF's time
+sane). tiktoken doesn't ship a trainer so there's nothing to compare
+there. Saves JSON.
 
 Usage:
     uv run --project benchmarks python benchmarks/tokenizer/bench_train.py
@@ -62,8 +63,8 @@ def main() -> None:
         f"{date.today().isoformat()}_tokenizer_train",
         {
             "corpus": {"file": str(SLICE), "bytes": n_bytes, "vocab_size": VOCAB},
-            "caveat": "Same slice + size; different pretokenizers/merges. "
-            "tiktoken ships no trainer.",
+            "caveat": "Same slice and size, different pretokenizers/merges. "
+            "tiktoken doesn't ship a trainer.",
             "ours_rust_s": round(t_ours, 2),
             "ours_merges": len(ours.merges()),
             "hf_tokenizers_s": round(t_hf, 2),
