@@ -15,7 +15,7 @@ model/
   bench_metal.py       # custom Metal RMSNorm vs built-ins
   plot_loss.py         # loss curves from metrics.jsonl
 results/               # committed JSON, one file per run (machine specs inside)
-charts/                # generated PNGs referenced by the README
+charts/                # generated PNGs (loss curves etc.)
 ```
 
 ## Rules we hold to

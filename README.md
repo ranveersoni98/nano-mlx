@@ -11,7 +11,7 @@ A GPT built entirely from scratch, running only on Apple silicon. No CUDA, no cl
 
 1. **Tokenizer (Rust)** - byte-level BPE: 256 base bytes (no unknown tokens, any bytes round-trip), o200k-style regex pre-splitting, 32k default vocab, `<|endoftext|>` / `<|pad|>` special tokens. Performance work: per-chunk cache, linked-list plus binary-heap merge loop, `rayon` batch encoding, incremental pair counting in training, streaming `.bin` encoding straight into the MLX pipeline.
 2. **Model (MLX)** - decoder-only transformer: RoPE, RMSNorm, SwiGLU, multi-head attention with optional GQA, weight tying, no biases. AdamW with warmup plus cosine decay, gradient clipping, `mx.compile`, hand-written KV cache, temperature / top-k / top-p sampling. Presets from debug (under 1M parameters) to base (about 125M).
-3. **Benchmarks** - our tokenizer against `tiktoken` and HuggingFace `tokenizers`, plus model throughput ablations (manual vs `mx.fast`, compile on/off, cache on/off, fp32 vs bf16). Machine specs travel with every run.
+3. **Benchmarks** - our tokenizer against `tiktoken` and HuggingFace `tokenizers`, plus model throughput ablations (manual vs `mx.fast`, compile on/off, cache on/off, fp32 vs bf16).
 
 ## Repo layout
 
@@ -55,7 +55,7 @@ Data flow: `download TinyStories -> encode_file_to_bin -> .bin (np.memmap) -> (x
 ## Benchmarks
 
 <!-- GENERATED from benchmarks/results/*.json by benchmarks/tokenizer/make_readme_table.py - do not hand-edit. -->
-_Machine: Apple M5, 17.2GB RAM, Python 3.14.8, rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew). Release build. Median of repeats; warmup discarded._
+_Machine: Apple M5, 23.2GB RAM, Python 3.14.8, rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew). Release build. Median of repeats; warmup discarded._
 
 Tokenizer encode (same inputs; different vocabs - ids not cross-compared):
 
@@ -122,16 +122,16 @@ uv run --project model python -m nanomlx.train --preset small --bin-dir data/tin
 uv run --project model python -m nanomlx.train --preset small --bin-dir data/tinystories/bins --ckpt-dir data/ckpts/small --vocab data/tinystories/vocab-32k.json --steps 20000 --batch 16 --seed 0 --resume data/ckpts/small/step_002000
 ```
 
-Presets: `debug` (sanity checks), `tiny` (about 10M parameters, quick experiments), `small` (about 30M, the real TinyStories run), `base` (about 125M, only if your RAM allows). Checkpoints keep the newest 3 plus best-val weights, always with `config.json` and the tokenizer hash.
+Presets: `debug` (sanity checks), `tiny` (about 10M parameters, quick experiments), `small` (about 30M, the real TinyStories run), `base` (about 125M, only if your RAM allows). Checkpoints keep the newest 3 plus best-val weights, always with the full config and the tokenizer hash.
 
 
 ## Known limitations
 
 - Single-doc `encode()` uses one thread (file/batch paths parallelize with rayon).
 - tiktoken beats us on large-file encode (DFA regex vs backtracking `fancy-regex`); we win cached/batch workloads.
-- `fancy-regex` 1M backtrack cap leads to 64K-char force-splits (documented, parity-held).
+- `fancy-regex` 1M backtrack cap leads to 64K-char force-splits (covered by parity tests).
 - Few-ms prefill timings wobble on laptops; medians plus relative findings reported.
-- `meta.json`/`tokenizer_sha256` uses FNV-1a until a hashing dependency is approved.
+- `meta.json`/`tokenizer_sha256` uses FNV-1a for now; switching to a real hash later.
 
 ## License
 
