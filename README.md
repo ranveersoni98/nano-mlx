@@ -1,7 +1,6 @@
 # Nano-MLX
 
 <p align="center">
-  <a href="https://github.com/ranveersoni/nanoMLX/actions/workflows/ci.yml"><img src="https://github.com/ranveersoni/nanoMLX/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="https://support.apple.com/en-ca/116943"><img src="https://img.shields.io/badge/platform-Apple%20silicon-blue" alt="Apple silicon" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License: MIT" /></a>
 </p>
