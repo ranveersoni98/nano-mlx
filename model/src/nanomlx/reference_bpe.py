@@ -220,7 +220,7 @@ class Tokenizer:
             if top < 2:
                 break
             # Tie-break: highest count, then the smallest pair. Keep this
-            # frozen, both sides have to do it the same way.
+            # fixed, both sides have to do it the same way.
             best = min(p for p, c in counts.items() if c == top)
             new_id = 256 + len(merges)
             merges.append(best)

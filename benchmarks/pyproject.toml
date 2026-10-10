@@ -1,7 +1,7 @@
 [project]
 name = "nanomlx-benchmarks"
 version = "0.1.0"
-description = "nanoMLX honest benchmark harnesses (tokenizer + model)"
+description = "nanoMLX benchmark scripts (tokenizer + model)"
 readme = "README.md"
 authors = [
     { name = "Ranveer Soni", email = "git@ranveersoni.me" }

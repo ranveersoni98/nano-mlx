@@ -140,7 +140,7 @@ def _best_effort(fn) -> None:
     """Run logging/teardown stuff that should never crash training."""
     try:
         fn()
-    except Exception:  # noqa: BLE001, S110 - best-effort by design
+    except Exception:  # noqa: BLE001, S110 - logging should never crash a run
         pass
 
 

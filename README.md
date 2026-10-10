@@ -20,9 +20,9 @@ nanoMLX/
   README.md / LICENSE
   tokenizer/             # Rust workspace: tokenizer-core + tokenizer-py (PyO3)
   model/                 # Python uv project: MLX model, data, training, inference
-  benchmarks/            # Python uv project: harnesses, results/*.json, charts/
+  benchmarks/            # Python uv project: bench scripts, results/*.json, charts/
   scripts/               # fixture regen, dataset download
-  tests/                 # cross-implementation parity (Rust vs Python)
+  tests/                 # Rust vs Python cross-checks
   data/                  # gitignored: raw text, .bin files, checkpoints
 ```
 

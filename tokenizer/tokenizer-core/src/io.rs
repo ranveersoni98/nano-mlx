@@ -1,7 +1,6 @@
-//! Persistence + the MLX data-pipeline entry point.
+//! Saving/loading plus the entry point the MLX data code uses.
 //!
-//! Save format (single JSON; a binary sidecar is only needed for huge vocabs
-//! and is out of scope until one is measured):
+//! Save format (one JSON file):
 //!
 //! ```json
 //! {
@@ -13,11 +12,11 @@
 //! }
 //! ```
 //!
-//! `load` refuses version, pattern, or checksum mismatches loudly -
-//! tokenizing training data with a different pattern than the model expects
-//! silently corrupts everything downstream.
+//! `load` says no to version, pattern, or checksum mismatches, loudly.
+//! Training data tokenized with a different pattern than the model expects
+//! quietly ruins everything downstream.
 //!
-//! `u16` iff `vocab_size < 65536` else `u32`, with a sibling `meta.json`.
+//! `u16` if `vocab_size < 65536` else `u32`, with a `meta.json` next to it.
 
 use std::fs;
 use std::path::Path;
@@ -30,7 +29,7 @@ use crate::encode::encode_bytes;
 use crate::error::{Error, Result};
 use crate::vocab::{fnv1a64, Tokenizer};
 
-/// Vocab file format version. Bump only with user approval (frozen format).
+/// Vocab file version. Only bump with a real reason (don't change the format lightly).
 pub const SAVE_VERSION: u32 = 1;
 
 #[derive(Serialize, Deserialize)]
@@ -46,8 +45,8 @@ fn hex(h: u64) -> String {
     format!("{h:016x}")
 }
 
-/// Current UTC time as ISO-8601 (`created` field). Hand-rolled days-to-civil
-/// (Howard Hinnant's algorithm) to avoid a date-time dependency.
+/// Now as ISO-8601 (`created` field). Days-to-civil done by hand (Howard
+/// Hinnant's trick) so we don't pull in a date-time crate.
 fn iso8601_now() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let secs = SystemTime::now()
@@ -187,9 +186,8 @@ pub fn encode_file_to_bin(
     }
     fs::write(out_path, &buf)?;
 
-    // Sibling meta.json, frozen schema. `tokenizer_sha256` holds the FNV-1a
-    // pattern fingerprint until a hashing dep is approved; loaders compare
-    // it for equality.
+    // Sibling meta.json, same fields every time. `tokenizer_sha256` holds
+    // the FNV-1a pattern fingerprint for now; loaders compare it for equality.
     let eos_id = tok
         .special_id("<|endoftext|>")
         .or_else(|| tok.special_tokens().first().and_then(|s| tok.special_id(s)))

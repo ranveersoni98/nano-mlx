@@ -3,7 +3,7 @@
 We check the saved fixtures AND a randomized corpus, zero mismatches.
 Run it in the model env (`uv run --project model pytest tests/`).
 
-The 10 MB randomized corpus is the big gate. It's marked slow so the
+The 10 MB randomized corpus is the big one. It's marked slow so the
 normal run stays quick. Run it directly when you want the full check.
 """
 
@@ -179,7 +179,7 @@ def test_randomized_corpus_10mb_gate(pair):
         n_bytes += len(doc.encode("utf-8"))
         n_docs += 1
     assert n_bytes >= 10 * 1024 * 1024
-    print(f"\n10MB gate: {n_docs} docs, {n_bytes} bytes, zero mismatches")
+    print(f"\n10MB check: {n_docs} docs, {n_bytes} bytes, no mismatches")
 
 
 def test_batch_matches_single(pair):

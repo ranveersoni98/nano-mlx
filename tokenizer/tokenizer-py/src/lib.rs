@@ -1,12 +1,12 @@
-//! Thin PyO3 bindings over `tokenizer-core` - no algorithmic code here.
+//! Thin PyO3 wrapper around `tokenizer-core`. No real logic here.
 //!
-//! (`py.detach` on every call that can exceed ~1 ms), and error
-//! mapping only. All BPE logic lives in `tokenizer-core` and is tested with
-//! plain `cargo test`.
+//! Just GIL handling (`py.detach` on calls that can take over ~1 ms) and
+//! error mapping. All BPE logic lives in `tokenizer-core` and gets tested
+//! with plain `cargo test`.
 
-// pyo3's #[pymethods] macro generates an `Into<PyErr>` conversion on values
-// that are already `PyErr`; that tripped `clippy::useless_conversion` is a
-// macro artifact, not a real conversion in hand-written code.
+// pyo3's #[pymethods] macro makes an `Into<PyErr>` conversion on values
+// that already are `PyErr`. That `clippy::useless_conversion` hit is macro
+// fallout, not a real conversion we wrote.
 #![allow(clippy::useless_conversion)]
 
 use std::path::PathBuf;
@@ -27,7 +27,7 @@ fn to_py(err: tokenizer_core::Error) -> PyErr {
     }
 }
 
-/// Byte-level BPE tokenizer (Rust core, Python skin).
+/// Byte-level BPE tokenizer (Rust inside, Python outside).
 ///
 /// encode_file_to_bin / decode / save / load`.
 #[pyclass(module = "nanomlx_tokenizer")]
@@ -46,9 +46,9 @@ impl PyTokenizer {
         })
     }
 
-    /// Train a vocabulary. Each entry of `files_or_texts` is read as a file
-    /// if it exists, else treated as literal text (mirrors the reference).
-    /// Training files must be valid UTF-8.
+    /// Train a vocab. Each entry of `files_or_texts` is read as a file if
+    /// it's there, otherwise treated as literal text (same as the Python side).
+    /// Training files have to be valid UTF-8.
     #[staticmethod]
     #[pyo3(signature = (files_or_texts, vocab_size, special_tokens=None))]
     fn train(
@@ -174,7 +174,7 @@ impl PyTokenizer {
 #[pymodule]
 fn nanomlx_tokenizer(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTokenizer>()?;
-    // Re-export under the frozen name so Python code reads naturally:
+    // Also export as plain `Tokenizer` so Python reads naturally:
     // `from nanomlx_tokenizer import Tokenizer`.
     m.add("Tokenizer", m.getattr("PyTokenizer")?)?;
     Ok(())

@@ -1,7 +1,6 @@
-//! M2 Step-B evidence: fast (linked-list + heap) vs naive re-scan,
-//! single vs rayon batch. Run with:
-//! `cargo bench --manifest-path tokenizer/Cargo.toml` (release only -
-//! debug builds are 10-100x slower and must never be quoted).
+//! Fast (linked-list + heap) vs naive rescan, single vs rayon batch. Run with:
+//! `cargo bench --manifest-path tokenizer/Cargo.toml` (release only,
+//! debug builds are 10-100x slower so don't quote those numbers).
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use tokenizer_core::encode::{encode_batch, encode_chunk_fast, encode_chunk_naive};

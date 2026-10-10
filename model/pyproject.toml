@@ -21,9 +21,8 @@ dev = [
     "pytest",
     "ruff",
     "maturin",
-    # Measurement-only: bench scripts run under this env for mlx access;
-    # psutil is a spec-listed (§15 benchmarks) dep used for RSS specs only,
-    # never imported by the model itself.
+    # Bench scripts run in this env so they can use mlx. psutil is only for
+    # RSS numbers in benches, the model itself never imports it.
     "psutil",
 ]
 

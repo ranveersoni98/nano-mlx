@@ -23,7 +23,7 @@ fixtures sit under tests/fixtures/ (tiny corpus plus saved vocab and expected id
 ```bash
 uv sync --project model --group dev
 uv run --project model maturin develop --release -m tokenizer/tokenizer-py/Cargo.toml  # after every sync!
-uv run --project model pytest model/tests/ tests/            # everything, incl. parity
+uv run --project model pytest model/tests/ tests/            # everything, incl. cross-checks
 uv run --project model pytest model/tests/ -m "not slow"     # quick pass
 uv run --project model ruff check model/ tests/ && uv run --project model ruff format --check model/ tests/
 ```

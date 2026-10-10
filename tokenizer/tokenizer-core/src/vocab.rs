@@ -1,15 +1,16 @@
-//! Vocabulary: merges, ranks, token bytes, special tokens.
+//! Vocab: merges, ranks, token bytes, special tokens.
 //!
 //!
 //! ```text
-//! 0..=255                single bytes (any input round-trips, no UNK)
-//! 256..256+n_merges      merged tokens, in merge (training) order
+//! 0..=255                single bytes (anything round-trips, no UNK)
+//! 256..256+n_merges      merged tokens, in the order they were learned
 //! 256+n_merges..         special tokens, in the order given at train time
 //! ```
 //!
-//! Merge **rank** = index in the merge list (lower = learned earlier =
-//! applied first at encode time). A pair's merged id is therefore always
-//! `256 + rank`, which the encoder relies on instead of a second lookup.
+//! Merge **rank** is just its spot in the merge list (lower means learned
+//! earlier means applied first at encode time). A pair's merged id is then
+//! always `256 + rank`, which the encoder uses directly instead of a second
+//! lookup.
 
 use std::collections::HashMap;
 use std::hash::BuildHasherDefault;
@@ -21,13 +22,12 @@ use crate::pretokenize::pattern_text;
 
 pub type FastMap<K, V> = HashMap<K, V, BuildHasherDefault<AHasher>>;
 
-/// Portable 64-bit FNV-1a hash.
+/// Plain 64-bit FNV-1a hash.
 ///
-/// Used for the pattern fingerprint and the merge checksum so that the Rust
-/// core and the Python reference (`reference_bpe.py`) compute
-/// **identical** values without sharing a crypto dependency. (Neither side
-/// is allowed a new hashing crate without approval; FNV-1a is ~10 lines in
-/// both languages.)
+/// Used for the pattern fingerprint and merge checksum so Rust and Python
+/// (`reference_bpe.py`) land on the exact same numbers without sharing a
+/// crypto dep. (Neither side gets a new hashing crate without a good
+/// reason. FNV-1a is ~10 lines in both languages.)
 pub fn fnv1a64(data: &[u8]) -> u64 {
     let mut h: u64 = 0xcbf29ce484222325;
     for &b in data {
@@ -37,11 +37,11 @@ pub fn fnv1a64(data: &[u8]) -> u64 {
     h
 }
 
-/// Byte-level BPE vocabulary + encoder state.
+/// Byte-level BPE vocab plus encoder state.
 ///
-/// Cheap to share across threads (`&Tokenizer` is `Send + Sync`): all
-/// interior mutability (compiled regex, chunk cache) lives in thread-locals
-/// inside [`crate::pretokenize`] and [`crate::encode`], never here.
+/// Cheap to share across threads (`&Tokenizer` is `Send + Sync`). Everything
+/// mutable (compiled regex, chunk cache) lives in thread-locals over in
+/// [`crate::pretokenize`] and [`crate::encode`], never here.
 #[derive(Debug)]
 pub struct Tokenizer {
     merges: Vec<(u32, u32)>,

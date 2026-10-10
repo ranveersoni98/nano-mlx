@@ -1,4 +1,4 @@
-# CI — macOS only (MLX doesn't do Linux/CUDA here)
+# CI - macOS only (MLX doesn't do Linux/CUDA here)
 
 on:
   push:

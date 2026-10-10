@@ -140,7 +140,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--quick", action="store_true", help="100 docs instead of full sets")
     args = ap.parse_args()
-    assert OUR_VOCAB.exists(), f"train it first (see M3): {OUR_VOCAB}"
+    assert OUR_VOCAB.exists(), f"train it first, missing: {OUR_VOCAB}"
     assert TRAIN_TXT.exists(), f"missing {TRAIN_TXT}"
 
     # 20MB slice so HF has something to train on (same data ours saw, just smaller).

@@ -1,24 +1,23 @@
-//! Encoding: text -> token ids (the hot path).
+//! Encoding: text to token ids (the hot path).
 //!
-//! Pipeline per input: split specials -> regex pre-tokenize -> per-chunk BPE.
-//! Merges never cross chunk boundaries (frozen rule; SuperBPE is M9).
+//! Each input goes: split specials, regex pre-tokenize, BPE per chunk.
+//! Merges never cross chunk edges.
 //!
-//! Per-chunk algorithm (fast path): bytes start as one symbol each in a
-//! **doubly linked list**; every adjacent pair with a known merge rank is
-//! pushed onto a **min-heap keyed by rank** (lower rank = learned earlier =
-//! merged first). Pop the best pair, splice it, push the two new neighbor
-//! pairs. Stale heap entries (pairs destroyed by an earlier merge) are
-//! detected by re-checking liveness + current rank and skipped - lazy
-//! deletion, no heap removals. Complexity is `O(n log n)` merges instead of
-//! the naive `O(n²)` re-scan; the naive version is kept as
-//! [`encode_chunk_naive`] for criterion A/B comparisons and as an
-//! independent correctness oracle in tests.
+//! Per-chunk trick (fast path): bytes start as one symbol each in a doubly
+//! linked list. Every neighboring pair with a known merge rank goes on a
+//! min-heap keyed by rank (lower rank means learned earlier means merge
+//! first). Pop the best pair, splice it in, push the two new neighbor
+//! pairs. Heap entries killed by an earlier merge get noticed by rechecking
+//! liveness and rank and skipped. No heap removals. This is `O(n log n)`
+//! merges instead of the naive `O(n^2)` rescan. The naive version sticks
+//! around as [`encode_chunk_naive`] for criterion A/B runs and as a second
+//! opinion in tests.
 //!
-//! Allocation discipline: the linked-list vectors are reused per call frame,
-//! chunk bytes map to `u32` ids without `String` round trips, and repeat
-//! chunks hit a **bounded thread-local cache** (`ahash`, cleared when full
-//! so memory stays flat). `encode_batch` fans out over rayon; output order
-//! always equals input order.
+//! Allocs: the linked-list vecs get reused per call, chunk bytes map to
+//! `u32` ids without bouncing through `String`, and repeat chunks hit a
+//! small thread-local cache (`ahash`, cleared when full so memory stays
+//! flat). `encode_batch` spreads over rayon. Output order always matches
+//! input order.
 
 use std::cell::RefCell;
 use std::cmp::Reverse;
@@ -32,8 +31,8 @@ use crate::error::{Error, Result};
 use crate::pretokenize::{pretokenize, split_special, Split};
 use crate::vocab::Tokenizer;
 
-/// Upper bound on cached chunks per thread. When full the cache is simply
-/// cleared (documented, deterministic, no LRU bookkeeping on the hot path).
+/// How many chunks we cache per thread. When it's full we just clear it
+/// (simple, deterministic, no LRU bookkeeping on the hot path).
 pub const MAX_CACHE_ENTRIES: usize = 8192;
 
 thread_local! {

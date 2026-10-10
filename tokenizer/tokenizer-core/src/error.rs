@@ -1,42 +1,40 @@
-//! Typed errors for `tokenizer-core`.
+//! Errors for `tokenizer-core`.
 //!
-//! Library code paths reachable from user input must return [`Result`] with
-//! this error type - never `unwrap`/`expect`/`panic`. (`unsafe` is forbidden
-//! per repo policy.)
+//! Anything user input can reach has to return [`Result`] with this type.
+//! No `unwrap` / `expect` / `panic` there. (`unsafe` is off limits in this repo.)
 
 use std::fmt;
 
-/// All failure modes of the tokenizer core.
+/// Everything that can go wrong in the tokenizer.
 #[derive(Debug)]
 pub enum Error {
-    /// Filesystem failure (read/write vocab, input corpus, `.bin` output).
+    /// Filesystem stuff (reading/writing vocabs, corpora, `.bin` files).
     Io(std::io::Error),
-    /// Malformed vocab JSON on save/load (boxed: keep `Result` small).
+    /// Vocab JSON didn't parse on save/load (boxed to keep `Result` small).
     Json(Box<serde_json::Error>),
-    /// The bundled pre-tokenization regex failed to compile or execute.
-    /// This can only happen if `patterns/o200k_style.txt` is corrupted;
-    /// it is never a function of user input. (Boxed: `fancy_regex::Error`
-    /// is large; see `result_large_err`.)
+    /// The bundled split regex wouldn't compile or run. Only happens if
+    /// `patterns/o200k_style.txt` got corrupted, never from user input.
+    /// (Boxed since `fancy_regex::Error` is big, see `result_large_err`.)
     Regex(Box<fancy_regex::Error>),
-    /// Loaded vocab was trained with a different pre-tokenization pattern.
+    /// Loaded vocab was trained with a different split pattern.
     PatternMismatch {
-        /// FNV-1a hash of the pattern this build was compiled with.
+        /// FNV-1a of the pattern this build was compiled with.
         expected: u64,
-        /// Hash recorded in the loaded vocab file.
+        /// Hash written in the loaded vocab file.
         found: u64,
     },
-    /// Vocab file format version is newer/older than this build understands.
+    /// Vocab file version this build doesn't understand.
     VersionMismatch { expected: u32, found: u32 },
-    /// Merge list was corrupted after saving (checksum over merges differs).
+    /// Merge list got mangled after saving (checksum over merges differs).
     ChecksumMismatch { expected: u64, found: u64 },
-    /// A token id is outside `0..vocab_size` (usually a caller bug or a
-    /// truncated `.bin` file).
+    /// Token id outside `0..vocab_size` (usually a caller bug or a cut-off
+    /// `.bin` file).
     InvalidId(u32),
-    /// Caller asked to encode with a special token that is not in the vocab.
-    /// Fix: add it at train time, or remove it from `allowed_special`.
+    /// Asked to encode with a special token that's not in the vocab. Fix is
+    /// to add it at train time or drop it from `allowed_special`.
     UnknownSpecialToken(String),
-    /// `decode_strict` hit bytes that are not valid UTF-8. Use the lossy
-    /// `decode` (replacement character) if that is acceptable.
+    /// `decode_strict` hit bytes that aren't valid UTF-8. Use the lossy
+    /// `decode` (replacement char) if that's okay.
     StrictUtf8(std::string::FromUtf8Error),
     /// A training/corpus file was not valid UTF-8 (training inputs must be
     /// valid UTF-8; TinyStories-class corpora are).
@@ -44,8 +42,7 @@ pub enum Error {
     /// A thread-local (compiled regex / chunk cache) was unavailable,
     /// e.g. during thread teardown.
     ThreadLocal(&'static str),
-    /// Called functionality scheduled for a later milestone (e.g. Rust
-    /// training is M3).
+    /// Called something we haven't built yet.
     NotImplemented(&'static str),
 }
 
@@ -90,7 +87,7 @@ impl fmt::Display for Error {
                 write!(f, "thread-local {what} unavailable (thread teardown?)")
             }
             Error::NotImplemented(what) => {
-                write!(f, "{what} is scheduled for a later milestone")
+                write!(f, "{what} isn't built yet")
             }
         }
     }

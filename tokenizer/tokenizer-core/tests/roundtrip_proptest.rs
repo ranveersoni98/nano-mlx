@@ -1,9 +1,9 @@
-//! M2 acceptance: `decode(encode(x)) == x` for arbitrary inputs.
+//! `decode(encode(x)) == x` for random inputs.
 //!
-//! - Arbitrary `String`: lossy decode reproduces the input exactly (valid
+//! - Random `String`: lossy decode gives back exactly what went in (valid
 //!   UTF-8 always survives byte-level BPE).
-//! - Arbitrary `Vec<u8>`: byte-exact round trip via the bytes path
-//!   (invalid UTF-8 never merges, never panics).
+//! - Random `Vec<u8>`: byte-exact round trip through the bytes path
+//!   (bad UTF-8 never merges, never panics).
 
 use proptest::prelude::*;
 use tokenizer_core::decode::{decode_lossy, decode_to_bytes};
@@ -53,8 +53,7 @@ proptest! {
     }
 }
 
-/// M2 acceptance, standalone (not per-case): huge single chunks must
-/// survive. Lives outside `proptest!` so it runs exactly once.
+/// Huge single chunks have to survive. Outside `proptest!` so it runs once.
 #[test]
 fn huge_single_chunk_round_trip() {
     let tok = test_tok();

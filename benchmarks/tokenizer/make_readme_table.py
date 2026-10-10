@@ -26,10 +26,7 @@ def model_table() -> list[str]:
     a = m["ablations"]
     mach = m["machine"]
     lines = [
-        (
-            "Model speed (tiny preset, 32k vocab, random init, "
-            "speed doesn't depend on weights):"
-        ),
+        ("Model speed (tiny preset, 32k vocab, random init, speed doesn't depend on weights):"),
         "",
         "| Train step (batch 4, ctx 256) | tok/s | Peak mem |",
         "|---|---|---|",

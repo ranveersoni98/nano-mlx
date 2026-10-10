@@ -1,14 +1,14 @@
-//! Decoding: token ids -> bytes -> `str`.
+//! Decoding: token ids back to bytes to `str`.
 //!
-//! Every id below `vocab_size` maps to bytes (normal tokens directly,
-//! specials via their registered strings), so decoding is total. The only
-//! fallible step is UTF-8 validation: [`decode_lossy`] substitutes the
-//! replacement character (default strategy), [`decode_strict`] raises.
+//! Every id under `vocab_size` maps to bytes (normal tokens directly,
+//! specials through their strings), so decoding always lands somewhere.
+//! The only bit that can fail is UTF-8 checking: [`decode_lossy`] swaps in
+//! the replacement char (the default), [`decode_strict`] errors.
 
 use crate::error::{Error, Result};
 use crate::vocab::Tokenizer;
 
-/// Raw bytes for `ids`. Rejects out-of-range ids with [`Error::InvalidId`].
+/// Raw bytes for `ids`. Out-of-range ids come back as [`Error::InvalidId`].
 pub fn decode_to_bytes(tok: &Tokenizer, ids: &[u32]) -> Result<Vec<u8>> {
     let vocab_size = tok.vocab_size() as u32;
     let mut out = Vec::new();
