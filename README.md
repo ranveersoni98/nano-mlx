@@ -99,11 +99,7 @@ Model throughput (tiny preset, 32k vocab, random init - throughput is weight-ind
 | mx.fast + KV cache | 39,127 | 503 |
 | mx.fast, re-forward | 27,206 | 160 |
 
-_Power: battery (29%). Warmup soak + discarded warmups; median of repeats with mx.eval inside. Few-ms prefill timings carry laptop variance - relative findings (cache about 2x decode, bf16 about 30% faster to train, compile about 10%, batch sublinear) reproduce across runs. On tiny models like this one, plain manual attention trains just as fast as the fused kernels._
-
 (Model table generated from `benchmarks/results/2026-10-10_model.json` - same generator.)
-
-Custom Metal kernel: a fused RMSNorm I wrote to see if I could beat Apple's. It is bitwise-correct against the plain version on fp32, clearly faster than eager manual code, and trades blows with `mx.fast` on large shapes (best run: 82.5 vs 109.0 GB/s at 32768x512). Full numbers in `benchmarks/results/2026-10-10_metal_rmsnorm.json`.
 
 ## Samples
 
