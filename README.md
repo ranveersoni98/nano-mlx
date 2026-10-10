@@ -9,7 +9,7 @@ A GPT built entirely from scratch, running only on Apple silicon. No CUDA, no cl
 
 ## What lives here
 
-1. **Tokenizer (Rust)** - byte-level BPE: 256 base bytes (no unknown tokens, any bytes round-trip), o200k-style regex pre-splitting, 32k default vocab, `<|endoftext|>` / `<|pad|>` special tokens. Performance work: per-chunk cache, linked-list plus binary-heap merge loop, `rayon` batch encoding, incremental pair counting in training, streaming `.bin` encoding straight into the MLX pipeline.
+1. **Tokenizer (Rust)** - byte-level BPE: 256 base bytes (no unknown tokens, any bytes round-trip), o200k-style regex pre-splitting, 32k default vocab, `<|endoftext|>` / `<|pad|>` special tokens. Performance work: per-chunk cache, linked-list plus binary-heap merge loop, `rayon` batch encoding, incremental pair counting in training.
 2. **Model (MLX)** - decoder-only transformer: RoPE, RMSNorm, SwiGLU, multi-head attention with optional GQA, weight tying, no biases. AdamW with warmup plus cosine decay, gradient clipping, `mx.compile`, hand-written KV cache, temperature / top-k / top-p sampling. Presets from debug (under 1M parameters) to base (about 125M).
 3. **Benchmarks** - our tokenizer against `tiktoken` and HuggingFace `tokenizers`, plus model throughput ablations (manual vs `mx.fast`, compile on/off, cache on/off, fp32 vs bf16).
 
