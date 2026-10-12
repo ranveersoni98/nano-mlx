@@ -5,6 +5,8 @@
 //! The only bit that can fail is UTF-8 checking: [`decode_lossy`] swaps in
 //! the replacement char (the default), [`decode_strict`] errors.
 
+use rayon::prelude::*;
+
 use crate::error::{Error, Result};
 use crate::vocab::Tokenizer;
 
@@ -36,6 +38,18 @@ pub fn decode_lossy(tok: &Tokenizer, ids: &[u32]) -> Result<String> {
     Ok(String::from_utf8_lossy(&decode_to_bytes(tok, ids)?).into_owned())
 }
 
+/// Decode many id sequences. Large batches spread over rayon; small ones
+/// stay sequential. Output order equals input order.
+pub fn decode_batch_lossy(tok: &Tokenizer, batches: &[Vec<u32>]) -> Result<Vec<String>> {
+    if batches.len() <= 1 || rayon::current_num_threads() <= 1 {
+        return batches.iter().map(|ids| decode_lossy(tok, ids)).collect();
+    }
+    batches
+        .par_iter()
+        .map(|ids| decode_lossy(tok, ids))
+        .collect()
+}
+
 /// Decode, raising [`Error::StrictUtf8`] on invalid UTF-8.
 pub fn decode_strict(tok: &Tokenizer, ids: &[u32]) -> Result<String> {
     Ok(String::from_utf8(decode_to_bytes(tok, ids)?)?)
@@ -63,5 +77,27 @@ mod tests {
             decode_strict(&tok, &ids).unwrap_err(),
             Error::StrictUtf8(_)
         ));
+    }
+
+    #[test]
+    fn batch_decode_matches_single() {
+        let tok = Tokenizer::from_merges(vec![(104, 105)], vec!["<|endoftext|>".to_owned()])
+            .expect("build");
+        let batches: Vec<Vec<u32>> = vec![
+            vec![104, 105],
+            vec![256],
+            vec![],
+            vec![257, 104, 105],
+            vec![72, 101, 108, 108, 111],
+        ];
+        let single: Vec<String> = batches
+            .iter()
+            .map(|ids| decode_lossy(&tok, ids).expect("single"))
+            .collect();
+        assert_eq!(decode_batch_lossy(&tok, &batches).expect("batch"), single);
+        assert_eq!(
+            decode_batch_lossy(&tok, &[]).expect("empty"),
+            Vec::<String>::new()
+        );
     }
 }

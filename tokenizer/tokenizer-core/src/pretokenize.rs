@@ -70,6 +70,12 @@ fn with_regex<T>(f: impl FnOnce(&Regex) -> Result<T>) -> Result<T> {
 /// Chop `text` into bits of at most [`MAX_SEGMENT_CHARS`] chars on char
 /// edges. Short inputs come back as one piece (fast path, costs nothing).
 pub fn split_long_segment(text: &str) -> Vec<&str> {
+    // Fast path on byte length: every char is at least one byte, so
+    // `len() <= MAX` implies char count <= MAX. This avoids an O(n) char
+    // scan on every small input (the latency-sensitive path).
+    if text.len() <= MAX_SEGMENT_CHARS {
+        return vec![text];
+    }
     if text.chars().count() <= MAX_SEGMENT_CHARS {
         return vec![text];
     }
@@ -157,6 +163,12 @@ pub enum Split<'t> {
 /// Anything not in `allowed` stays normal text (tiktoken-style default, so
 /// user data can't sneak in control tokens). Longest match wins at each spot
 /// so overlapping names (like `<|a|>` vs `<|ab|>`) behave.
+///
+/// Hit search uses `match_indices` (SIMD substring search in std) instead
+/// of stepping char by char, so scanning GB-scale files for a rare marker
+/// costs ~nothing. Overlapping hits resolve longest-first, exactly like the
+/// old per-position scan: at each spot the longest allowed match wins and
+/// scanning resumes past it.
 pub fn split_special<'t>(text: &'t str, allowed: &[&'t str]) -> Vec<Split<'t>> {
     if allowed.is_empty() || text.is_empty() {
         return if text.is_empty() {
@@ -165,44 +177,76 @@ pub fn split_special<'t>(text: &'t str, allowed: &[&'t str]) -> Vec<Split<'t>> {
             vec![Split::Text(text)]
         };
     }
-    // Longest-first so overlaps resolve deterministically.
+    // Longest-first so overlaps resolve deterministically; dedupe so each
+    // pattern contributes one hit stream. Empty patterns would match
+    // everywhere, so they are dropped (matching nothing is the sane read).
     let mut pats: Vec<&'t str> = allowed.to_vec();
     pats.sort_by_key(|s| std::cmp::Reverse(s.len()));
+    pats.dedup();
+    pats.retain(|p| !p.is_empty());
+    if pats.is_empty() {
+        return vec![Split::Text(text)];
+    }
+    if pats.len() == 1 {
+        return split_special_single(text, pats[0]);
+    }
+    split_special_multi(text, &pats)
+}
 
+/// One-pattern fast path: walk its non-overlapping occurrences in order.
+fn split_special_single<'t>(text: &'t str, pat: &'t str) -> Vec<Split<'t>> {
     let mut out = Vec::new();
     let mut pos = 0usize;
-    let mut run_start = 0usize;
-    while pos < text.len() {
-        let mut hit: Option<&'t str> = None;
-        for p in &pats {
-            if text[pos..].starts_with(p) {
-                hit = Some(p);
-                break;
-            }
+    for (s, _) in text.match_indices(pat) {
+        if s > pos {
+            out.push(Split::Text(&text[pos..s]));
         }
-        match hit {
-            Some(p) => {
-                if pos > run_start {
-                    out.push(Split::Text(&text[run_start..pos]));
-                }
-                out.push(Split::Special(p));
-                pos += p.len();
-                run_start = pos;
-            }
-            None => {
-                // Advance one scalar value (specials are matched on bytes,
-                // but stepping by char keeps `pos` on a valid boundary).
-                let step = text[pos..]
-                    .chars()
-                    .next()
-                    .map(|c| c.len_utf8())
-                    .unwrap_or(1);
-                pos += step;
-            }
+        out.push(Split::Special(&text[s..s + pat.len()]));
+        pos = s + pat.len();
+    }
+    if pos < text.len() {
+        out.push(Split::Text(&text[pos..]));
+    }
+    out
+}
+
+/// Multi-pattern path: k-way merge over the per-pattern hit streams (each
+/// sorted by construction), longest match wins at each spot, overlapped
+/// hits are skipped. Streaming: only the heap (one entry per pattern) and
+/// the output are materialized, never the full hit list.
+fn split_special_multi<'t>(text: &'t str, pats: &[&'t str]) -> Vec<Split<'t>> {
+    use std::cmp::Reverse;
+    use std::collections::BinaryHeap;
+
+    // Heap of (start, longest-len-first, pattern index, end). `BinaryHeap`
+    // is a max-heap: wrap start in Reverse for earliest-first, keep length
+    // unwrapped so longer wins ties at the same start.
+    let mut iters: Vec<std::str::MatchIndices<'_, &str>> =
+        pats.iter().map(|p| text.match_indices(*p)).collect();
+    let mut heap: BinaryHeap<(Reverse<usize>, usize, usize, usize)> = BinaryHeap::new();
+    for (i, it) in iters.iter_mut().enumerate() {
+        if let Some((s, m)) = it.next() {
+            heap.push((Reverse(s), m.len(), i, s + m.len()));
         }
     }
-    if run_start < text.len() {
-        out.push(Split::Text(&text[run_start..]));
+    let mut out = Vec::new();
+    let mut pos = 0usize;
+    while let Some((Reverse(s), _len, i, e)) = heap.pop() {
+        // Pull the next hit from the same stream before using this one.
+        if let Some((ns, nm)) = iters[i].next() {
+            heap.push((Reverse(ns), nm.len(), i, ns + nm.len()));
+        }
+        if s < pos {
+            continue; // overlapped by an earlier (longer-or-equal) hit
+        }
+        if s > pos {
+            out.push(Split::Text(&text[pos..s]));
+        }
+        out.push(Split::Special(&text[s..e]));
+        pos = e;
+    }
+    if pos < text.len() {
+        out.push(Split::Text(&text[pos..]));
     }
     out
 }
@@ -242,6 +286,49 @@ mod tests {
         assert_eq!(
             parts,
             vec![Split::Text("x"), Split::Special("<|ab|>"), Split::Text("y")]
+        );
+    }
+
+    #[test]
+    fn special_split_overlap_and_edge_cases() {
+        // Shorter pattern at the same spot loses; shadowed hits are skipped.
+        assert_eq!(
+            split_special("aab", &["a", "aa"]),
+            vec![Split::Special("aa"), Split::Text("b"),]
+        );
+        // Adjacent and repeated hits.
+        assert_eq!(
+            split_special("<|e|><|e|>", &["<|e|>"]),
+            vec![Split::Special("<|e|>"), Split::Special("<|e|>")]
+        );
+        // Overlapping occurrences of one pattern resolve left to right.
+        assert_eq!(
+            split_special("aaaa", &["aa"]),
+            vec![Split::Special("aa"), Split::Special("aa")]
+        );
+        assert_eq!(
+            split_special("aaaa", &["aaa", "aa"]),
+            vec![Split::Special("aaa"), Split::Text("a")]
+        );
+        // Empty patterns match nothing; duplicates collapse.
+        assert_eq!(split_special("ab", &[""]), vec![Split::Text("ab")]);
+        assert_eq!(
+            split_special("a<|e|>b", &["<|e|>", "<|e|>"]),
+            vec![Split::Text("a"), Split::Special("<|e|>"), Split::Text("b")]
+        );
+        // Unicode text and multibyte specials split on char boundaries.
+        assert_eq!(
+            split_special("héllo🎉world", &["🎉"]),
+            vec![
+                Split::Text("héllo"),
+                Split::Special("🎉"),
+                Split::Text("world")
+            ]
+        );
+        // Whole input is one special; no-text runs vanish.
+        assert_eq!(
+            split_special("<|endoftext|>", &["<|endoftext|>"]),
+            vec![Split::Special("<|endoftext|>")]
         );
     }
 

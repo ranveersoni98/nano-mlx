@@ -9,7 +9,7 @@ A GPT built from scratch, only runs on Apple silicon. No CUDA, no cloud GPUs, no
 
 ## What lives here
 
-1. **Tokenizer (Rust)** - byte-level BPE. 256 base bytes so anything round-trips, o200k-style regex splitting, 32k vocab by default, `<|endoftext|>` / `<|pad|>` specials. Fast bits: per-chunk cache, linked-list plus heap merge loop, `rayon` batch encoding, incremental pair counting in training.
+1. **Tokenizer (Rust)** - byte-level BPE. 256 base bytes so anything round-trips, o200k-style regex splitting, 32k vocab by default, `<|endoftext|>` / `<|pad|>` specials. Fast bits: large inputs encode their 64K pre-tokenize pieces on the rayon pool (output identical at any thread count), per-chunk cache, linked-list plus heap merge loop with fast lanes for single bytes / tiny chunks / whole-chunk hits, `memchr`-based special scanning, parallel batch encode plus batch decode, parallel word counting in training (20MB slice to 5k vocab in ~1s, at parity with HF).
 2. **Model (MLX)** - decoder-only transformer with RoPE, RMSNorm, SwiGLU, multi-head attention plus optional GQA, tied weights, no biases. AdamW with warmup and cosine decay, grad clipping, `mx.compile`, KV cache we wrote by hand, temperature / top-k / top-p sampling. Sizes from debug (under 1M params) to base (around 125M).
 3. **Benchmarks** - our tokenizer vs `tiktoken` and HF `tokenizers`, plus model speed runs (hand-written vs `mx.fast`, compile on/off, cache on/off, fp32 vs bf16).
 
@@ -32,7 +32,7 @@ You need Rust stable, [`uv`](https://docs.astral.sh/uv/), and a Mac with Apple s
 
 ```bash
 git clone <repo> && cd nanoMLX
-cargo test --workspace --manifest-path tokenizer/Cargo.toml   # 22 + 4 pass
+cargo test --workspace --manifest-path tokenizer/Cargo.toml   # 27 + 4 pass
 uv sync --project model --group dev && uv sync --project benchmarks --group dev
 uv run --project model maturin develop --release -m tokenizer/tokenizer-py/Cargo.toml
 uv run --project model pytest model/tests/ tests/            # 70+ pass
@@ -55,26 +55,26 @@ Data flow is: `download TinyStories, encode to .bin files, load with memmap, tra
 ## Benchmarks
 
 <!-- Made from benchmarks/results/*.json by benchmarks/tokenizer/make_readme_table.py, don't edit by hand. -->
-_Machine: Apple M5, 23.2GB RAM, Python 3.14.8, rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew). Release build. Median of repeats, warmup thrown away._
+_Machine: Apple M5, 23.3GB RAM, Python 3.14.8, rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew). Release build. Median of repeats, warmup thrown away._
 
 Tokenizer encode (same inputs, different vocabs, so ids aren't compared):
 
 | Workload | ours (Rust) | HF tokenizers | tiktoken o200k |
 |---|---|---|---|
-| 100MB file | 1,834,746 tok/s (8.0 MB/s) | 454,892 tok/s (1.88 MB/s) | 6,554,700 tok/s (28.0 MB/s) |
-| short-string latency p50/p99 | 26.5/59.1 µs | 61.7/147.6 µs | 8.8/35.7 µs |
-| code-heavy | 16,342,003 tok/s | 6,827,342 tok/s | 5,509,937 tok/s |
-| multilingual | 62,504,411 tok/s | 13,587,341 tok/s | 3,785,801 tok/s |
-| full 1.9GB file (ours only) | 5,940,192 tok/s (25.87 MB/s) | - | - |
+| 100MB file | 3,580,190 tok/s (15.61 MB/s) | 839,038 tok/s (3.46 MB/s) | 12,516,930 tok/s (53.48 MB/s) |
+| short-string latency p50/p99 | 13.8/24.0 µs | 30.8/47.1 µs | 4.2/7.0 µs |
+| code-heavy | 21,862,668 tok/s | 9,386,520 tok/s | 10,340,038 tok/s |
+| multilingual | 88,860,092 tok/s | 20,044,298 tok/s | 8,655,806 tok/s |
+| full 1.9GB file (ours only) | 10,007,244 tok/s (43.59 MB/s) | - | - |
 
 Tokenizer training (same 20MB slice, vocab 5000, tiktoken has no trainer):
 
 | Implementation | Wall time |
 |---|---|
-| ours (Rust) | 2.5s (4742 merges) |
-| HF tokenizers | 1.7s |
+| ours (Rust) | 1.31s (4742 merges) |
+| HF tokenizers | 0.94s |
 
-_Heads up: single-doc inputs only use one thread on our side (file and batch paths do parallelize). tiktoken wins big-file encode because its regex stays linear where our backtracking one slows down._
+_Heads up: large inputs encode their 64K pre-tokenize pieces in parallel (same pieces either way, so output is identical at any thread count). tiktoken still leads big-file encode - its regex engine stays linear where our backtracking one slows down - but the gap is much smaller than it was._
 
 Model speed (tiny preset, 32k vocab, random init, speed doesn't depend on weights):
 
@@ -127,10 +127,10 @@ Presets: `debug` (sanity checks), `tiny` (around 10M params, quick tries), `smal
 
 ## Known limitations
 
-- Single-doc `encode()` uses one thread (file/batch paths use rayon).
-- tiktoken beats us on big-file encode (its DFA regex stays linear, ours backtracks). We win on cached/batch stuff.
-- `fancy-regex` has a 1M backtrack cap, so we chop at 64K chars (tests cover it).
-- Millisecond prefill timings wobble on laptops. We report medians plus the relative takeaways.
+- tiktoken still beats us on big-file encode (its regex engine stays linear, ours backtracks). We win code-heavy, multilingual, and short-latency-vs-HF.
+- `fancy-regex` has a 1M backtrack cap, so we chop at 64K chars (tests cover it, both implementations agree exactly).
+- Short-string latency floor is ~10µs (regex + PyO3 overhead per call); batch your docs.
+- Millisecond prefill timings wobble on laptops (worse on battery - sustained benches throttle). We report medians plus the relative takeaways.
 - `meta.json` / `tokenizer_sha256` is FNV-1a for now. We'll swap in a real hash later.
 
 ## License

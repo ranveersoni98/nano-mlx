@@ -50,6 +50,9 @@ pub struct Tokenizer {
     bytes_to_id: FastMap<Vec<u8>, u32>,
     special_tokens: Vec<String>,
     special_to_id: FastMap<String, u32>,
+    /// Longest normal-token byte length. Lets the encoder skip the
+    /// whole-chunk hash lookup for chunks no vocab token can equal.
+    max_token_len: usize,
 }
 
 impl Tokenizer {
@@ -65,6 +68,7 @@ impl Tokenizer {
         for (id, bytes) in token_bytes.iter().enumerate() {
             bytes_to_id.insert(bytes.clone(), id as u32);
         }
+        let mut max_token_len = 1usize;
 
         let mut rank: FastMap<(u32, u32), u32> =
             HashMap::with_capacity_and_hasher(merges.len(), Default::default());
@@ -79,6 +83,7 @@ impl Tokenizer {
             let mut joined = Vec::with_capacity(lb.len() + rb.len());
             joined.extend_from_slice(lb);
             joined.extend_from_slice(rb);
+            max_token_len = max_token_len.max(joined.len());
             rank.insert((left, right), i as u32);
             bytes_to_id.insert(joined.clone(), new_id);
             token_bytes.push(joined);
@@ -98,6 +103,7 @@ impl Tokenizer {
             bytes_to_id,
             special_tokens,
             special_to_id,
+            max_token_len,
         })
     }
 
@@ -139,6 +145,13 @@ impl Tokenizer {
     /// Fast path for whole-chunk lookup: the id whose bytes equal `chunk`.
     pub fn chunk_id(&self, chunk: &[u8]) -> Option<u32> {
         self.bytes_to_id.get(chunk).copied()
+    }
+
+    /// Longest normal-token byte length (1 for a merge-free vocab).
+    /// Chunks longer than this can never equal a vocab token, so the
+    /// encoder skips the hash lookup for them.
+    pub fn max_token_len(&self) -> usize {
+        self.max_token_len
     }
 
     /// Number of learned merges.

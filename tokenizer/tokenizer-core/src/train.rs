@@ -47,7 +47,10 @@ fn pair_multiset(tokens: &[u32]) -> FastMap<(u32, u32), u64> {
 }
 
 /// Rewrite `tokens` merging every non-overlapping hit of `pair`
-/// into `new_id`. True if anything changed.
+/// into `new_id`, in place with a two-pointer compact. True if anything
+/// changed. Cheaper than building a fresh `Vec`: no second allocation,
+/// one pass, and the quick presence scan bails on stale index refs before
+/// touching anything.
 fn apply_merge(tokens: &mut Vec<u32>, pair: (u32, u32), new_id: u32) -> bool {
     if tokens.len() < 2 {
         return false;
@@ -63,19 +66,29 @@ fn apply_merge(tokens: &mut Vec<u32>, pair: (u32, u32), new_id: u32) -> bool {
     if !maybe {
         return false;
     }
-    let mut merged = Vec::with_capacity(tokens.len());
-    let mut i = 0;
-    while i < tokens.len() {
-        if i + 1 < tokens.len() && (tokens[i], tokens[i + 1]) == pair {
-            merged.push(new_id);
-            i += 2;
+    let n = tokens.len();
+    let mut read = 0usize;
+    let mut write = 0usize;
+    while read < n {
+        // SAFETY-free indexing: `read < n` and the `+1` is bounds-checked.
+        if read + 1 < n && tokens[read] == pair.0 && tokens[read + 1] == pair.1 {
+            tokens[write] = new_id;
+            write += 1;
+            read += 2;
         } else {
-            merged.push(tokens[i]);
-            i += 1;
+            tokens[write] = tokens[read];
+            write += 1;
+            read += 1;
         }
     }
-    *tokens = merged;
+    tokens.truncate(write);
     true
+}
+
+/// Does `tokens` contain `pair` anywhere? O(len) scan, no allocs, no
+/// hashing - the stale-index filter for the merge loop.
+fn contains_pair(tokens: &[u32], pair: (u32, u32)) -> bool {
+    tokens.windows(2).any(|w| (w[0], w[1]) == pair)
 }
 
 /// Train a vocab on `texts` (each one document string).
@@ -93,27 +106,43 @@ pub fn train(
 
     // 1. Word frequencies, counted once, in parallel. Words are
     // pre-tokenized chunks (chopping rule included), same as the Python
-    // side: every byte lands in exactly one word.
-    let per_text: Result<Vec<FastMap<String, u64>>> = texts
+    // side: every byte lands in exactly one word. The 64K pieces are the
+    // identical units the sequential path runs
+    // (`split_long_segment` from each text start), so parallel counting
+    // produces exactly the same words - only the thread assignment
+    // differs. Fold per thread, then reduce: ~10 maps merge, not one per
+    // piece.
+    let mut pieces: Vec<&str> = Vec::new();
+    for text in texts {
+        pieces.extend(split_long_segment(text));
+    }
+    // Fold per thread, then reduce: ~10 maps merge, not one per piece.
+    // `Result` accumulators give try-fold semantics (a pretokenize failure
+    // - only possible from a corrupted pattern file - short-circuits).
+    let freq: FastMap<String, u64> = pieces
         .par_iter()
-        .map(|text| {
-            let mut local: FastMap<String, u64> = FastMap::default();
-            for piece in split_long_segment(text) {
+        .fold(
+            || Ok(FastMap::default()),
+            |acc: Result<FastMap<String, u64>>, piece| {
+                let mut local = acc?;
                 for chunk in pretokenize(piece)? {
                     if !chunk.is_empty() {
                         *local.entry(chunk.to_owned()).or_insert(0) += 1;
                     }
                 }
-            }
-            Ok(local)
-        })
-        .collect();
-    let mut freq: FastMap<String, u64> = FastMap::default();
-    for local in per_text? {
-        for (w, c) in local {
-            *freq.entry(w).or_insert(0) += c;
-        }
-    }
+                Ok(local)
+            },
+        )
+        .reduce(
+            || Ok(FastMap::default()),
+            |a: Result<FastMap<String, u64>>, b: Result<FastMap<String, u64>>| {
+                let mut acc = a?;
+                for (w, c) in b? {
+                    *acc.entry(w).or_insert(0) += c;
+                }
+                Ok(acc)
+            },
+        )?;
 
     // 2. Words as byte-id sequences.
     let mut words: Vec<Word> = freq
@@ -161,12 +190,27 @@ pub fn train(
         let new_id = 256 + merges.len() as u32;
         merges.push(pair);
         // Rewrite only words containing the pair.
-        let holders = index.remove(&pair).unwrap_or_default();
+        let mut holders = index.remove(&pair).unwrap_or_default();
+        // The index is append-only, so `holders` accumulates stale and
+        // duplicate refs over time. Deduping big lists keeps the merge
+        // loop from re-scanning the same word over and over.
+        if holders.len() > 64 {
+            holders.sort_unstable();
+            holders.dedup();
+        }
         for idx in holders {
+            // Stale-index filter BEFORE any allocation: most late-merge
+            // holders no longer contain the pair, and this scan costs
+            // O(len) with no hashing. (Previously the `old` multiset
+            // HashMap was built first and thrown away for these.)
+            if !contains_pair(&words[idx].tokens, pair) {
+                continue;
+            }
             let word = &mut words[idx];
             let old = pair_multiset(&word.tokens);
             if !apply_merge(&mut word.tokens, pair, new_id) {
-                continue; // stale index ref
+                continue; // raced by the check above (cannot happen
+                          // single-threaded, kept for safety)
             }
             let new = pair_multiset(&word.tokens);
             // Count down killed pairs, count up new ones. Every pair whose
@@ -176,19 +220,20 @@ pub fn train(
             // merge. Stale entries die when popped.)
             for (p, c) in &old {
                 let delta = c * word.freq;
-                match counts.get_mut(p) {
+                let cur = match counts.get_mut(p) {
                     Some(v) => {
                         *v = v
                             .checked_sub(delta)
                             .ok_or(Error::NotImplemented("pair count underflow (training bug)"))?;
+                        *v
                     }
                     None => {
                         return Err(Error::NotImplemented(
                             "missing pair count during merge (training bug)",
                         ));
                     }
-                }
-                heap.push((counts[p], Reverse(*p)));
+                };
+                heap.push((cur, Reverse(*p)));
             }
             for (p, c) in new {
                 let entry = counts.entry(p).or_insert(0);

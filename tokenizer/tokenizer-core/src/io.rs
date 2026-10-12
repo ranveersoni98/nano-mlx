@@ -22,7 +22,6 @@ use std::fs;
 use std::path::Path;
 use std::time::Instant;
 
-use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::encode::encode_bytes;
@@ -137,13 +136,12 @@ pub struct FileStats {
 /// The MLX data pipeline joins documents with `<|endoftext|>` markers and
 /// passes it here so documents stay EOS-separated in the `.bin`.
 ///
-/// Parallelism: the input is sharded at `\n` boundaries, which the
-/// pre-tokenization regex is guaranteed to also split at - every pattern
-/// alternative containing `\n` ends with it, so no match ever straddles a
-/// `\n`. Shards therefore concatenate to exactly the single-thread output
-/// (proven by `thread_count_independence` below on every run of the test
-/// suite). Shard starts/ends sit right after `\n` (ASCII), so they are
-/// always UTF-8 char boundaries and the bytes-path chunking agrees too.
+/// Parallelism lives inside [`encode_bytes`]: the file is chopped into the
+/// same 64K pre-tokenize pieces a single `encode` call would run, and the
+/// pieces encode on the rayon pool. Output is therefore byte-identical to
+/// encoding the same bytes in one call, at any thread count (proven by
+/// `thread_count_independence` below, including long mergeable runs that
+/// cross piece edges).
 ///
 /// This is the function that feeds the MLX pipeline: `train.bin`/`val.bin`
 /// + `meta.json` are what `model/src/nanomlx/data.py` memory-maps.
@@ -157,20 +155,7 @@ pub fn encode_file_to_bin(
     let bytes = fs::read(in_path)?;
     let bytes_in = bytes.len() as u64;
 
-    let n_threads = rayon::current_num_threads().max(1);
-    let shards = shard_at_newlines(&bytes, n_threads);
-    let mut all_ids: Vec<u32> = Vec::new();
-    if shards.len() <= 1 {
-        all_ids.extend(encode_bytes(tok, &bytes, allowed_specials)?);
-    } else {
-        let parts: Result<Vec<Vec<u32>>> = shards
-            .par_iter()
-            .map(|s| encode_bytes(tok, s, allowed_specials))
-            .collect();
-        for mut p in parts? {
-            all_ids.append(&mut p);
-        }
-    }
+    let all_ids = encode_bytes(tok, &bytes, allowed_specials)?;
 
     //u16 iff vocab < 64k.
     let use_u16 = tok.vocab_size() < 65536;
@@ -218,35 +203,6 @@ pub fn encode_file_to_bin(
     })
 }
 
-/// Split `bytes` into ≤ `n` shards, each ending right after a `\n`
-/// (the final shard takes the tail). See fn docs for why this is exact.
-fn shard_at_newlines(bytes: &[u8], n: usize) -> Vec<&[u8]> {
-    if n <= 1 || bytes.len() < 64 * 1024 {
-        return vec![bytes];
-    }
-    let target = bytes.len() / n;
-    let mut bounds = vec![0usize];
-    for k in 1..n {
-        let mut b = (k * target).min(bytes.len());
-        // Only newlines: memchr-style scan without the dependency.
-        while b < bytes.len() && bytes[b] != b'\n' {
-            b += 1;
-        }
-        if b < bytes.len() {
-            b += 1; // include the newline: boundary sits after it.
-        }
-        if b > *bounds.last().unwrap_or(&0) && b < bytes.len() {
-            bounds.push(b);
-        }
-    }
-    bounds.push(bytes.len());
-    bounds
-        .windows(2)
-        .map(|w| &bytes[w[0]..w[1]])
-        .filter(|s| !s.is_empty())
-        .collect()
-}
-
 /// Portable checksum helper shared with the Python reference (FNV-1a over
 /// the raw file bytes), used by `data.py`'s `tokenizer_sha256` equivalent.
 pub fn file_fingerprint(bytes: &[u8]) -> u64 {
@@ -291,36 +247,44 @@ mod tests {
     #[test]
     fn thread_count_independence() {
         // Mixed text incl. multibyte chars, punctuation-newline runs, and
-        // invalid bytes - the exact cases that break naive sharding.
-        let tok = mini_tok();
+        // invalid bytes, PLUS long mergeable runs crossing 64K piece edges
+        // (the exact cases that break naive sharding or misaligned chops).
+        let tok = Tokenizer::from_merges(
+            vec![(104, 105), (32, 32), (97, 97), (104, 101)],
+            vec!["<|endoftext|>".into()],
+        )
+        .expect("build");
         let mut bytes = "hello\nhi!!!\n\nworld 🎉\n  spaced   \n"
             .as_bytes()
             .to_vec();
         bytes.extend_from_slice(&[0xFF, 0xFE, b'a', 0x80]);
         bytes.extend_from_slice("trailing no newline".as_bytes());
+        // >64K mergeable runs at awkward offsets (piece edges must not matter).
+        bytes.extend_from_slice("prefix ".as_bytes());
+        bytes.extend_from_slice(&vec![b'a'; 200_000]);
+        bytes.extend_from_slice("\nmiddle\n".as_bytes());
+        bytes.extend_from_slice(&vec![b' '; 100_000]);
+        bytes.extend_from_slice("the end".as_bytes());
 
         let dir = std::env::temp_dir().join("nanomlx_tok_test");
         fs::create_dir_all(&dir).expect("mkdir");
         let inp = dir.join("shard_input.txt");
         fs::write(&inp, &bytes).expect("write");
 
-        let single = encode_bytes(&tok, &bytes, &[]).expect("single");
+        // Reference: single-threaded pool (no parallelism at all).
+        let pool1 = rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .expect("pool1");
+        let single = pool1.install(|| encode_bytes(&tok, &bytes, &[]).expect("single"));
 
-        // Force several thread counts through scoped pools.
-        for threads in [1usize, 2, 4, 8] {
+        // Force several thread counts: output must be identical every time.
+        for threads in [2usize, 4, 8] {
             let pool = rayon::ThreadPoolBuilder::new()
                 .num_threads(threads)
                 .build()
                 .expect("pool");
-            let parallel = pool.install(|| {
-                let shards = shard_at_newlines(&bytes, threads);
-                let parts: Result<Vec<Vec<u32>>> = shards
-                    .par_iter()
-                    .map(|s| encode_bytes(&tok, s, &[]))
-                    .collect();
-                parts.map(|pp| pp.into_iter().flatten().collect::<Vec<u32>>())
-            });
-            let parallel = parallel.expect("parallel");
+            let parallel = pool.install(|| encode_bytes(&tok, &bytes, &[]).expect("parallel"));
             assert_eq!(single, parallel, "threads={threads}");
         }
 

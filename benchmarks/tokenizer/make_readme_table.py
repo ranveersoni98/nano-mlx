@@ -125,10 +125,11 @@ def main() -> None:
         f"| HF tokenizers | {tr['hf_tokenizers_s']}s |",
         "",
         (
-            "_Heads up: single-doc inputs only use one thread on our side "
-            "(file and batch paths do parallelize). tiktoken wins big-file "
-            "encode because its regex stays linear where our backtracking "
-            "one slows down._"
+            "_Heads up: large inputs encode their 64K pre-tokenize pieces in "
+            "parallel (same pieces either way, so output is identical at any "
+            "thread count). tiktoken still leads big-file encode - its regex "
+            "engine stays linear where our backtracking one slows down - "
+            "but the gap is much smaller than it was._"
         ),
     ]
     print("\n".join(lines))

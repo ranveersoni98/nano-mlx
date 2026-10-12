@@ -781,6 +781,7 @@ dependencies = [
  "ahash",
  "criterion",
  "fancy-regex",
+ "memchr",
  "proptest",
  "rayon",
  "serde",

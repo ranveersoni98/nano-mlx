@@ -130,6 +130,26 @@ impl PyTokenizer {
         })
     }
 
+    #[pyo3(signature = (batches, strict=false))]
+    fn decode_batch(
+        &self,
+        py: Python<'_>,
+        batches: Vec<Vec<u32>>,
+        strict: bool,
+    ) -> PyResult<Vec<String>> {
+        py.detach(|| {
+            if strict {
+                batches
+                    .iter()
+                    .map(|ids| tokenizer_core::decode::decode_strict(&self.inner, ids))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(to_py)
+            } else {
+                tokenizer_core::decode::decode_batch_lossy(&self.inner, &batches).map_err(to_py)
+            }
+        })
+    }
+
     #[pyo3(signature = (in_path, out_path, allowed_special=None))]
     fn encode_file_to_bin(
         &self,
